@@ -21,11 +21,11 @@ Libraries built on these frameworks should be able to use *vivisect* without mod
 
 ## Quick start
 
-Install the library and one of the supported frameworks:
+Install the library and the supported frameworks:
 
 ```python
 pip install . --user
-pip install pytorch --user
+pip install pytorch mxnet tensorflow--user
 ```
 
 *Note: Vivisect requires an MXNet version > 1.2 which includes the ability to attach hooks: until then, you'll need to [install from source](www.mxnet.com) or use PyTorch/Tensorflow*
@@ -39,10 +39,10 @@ python -m vivisect.server --host localhost --port 8080
 In another terminal, run one of the tests:
 
 ```bash
-python -m vivisect.pytorch.examples --host localhost --port 8080
+python scripts/run_examples.py --host localhost --port 8080
 ```
 
-You should see some output on the server terminal as the example model trains and passes tensors to it.
+You should see some output on the server terminal as the example models train and pass tensors to it.
 
 ## Using in your code
 
