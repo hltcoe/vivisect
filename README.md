@@ -25,7 +25,7 @@ Install the library and the supported frameworks:
 
 ```python
 pip install . --user
-pip install pytorch mxnet tensorflow--user
+pip install pytorch mxnet tensorflow --user
 ```
 
 *Note: Vivisect requires an MXNet version > 1.2 which includes the ability to attach hooks: until then, you'll need to [install from source](www.mxnet.com) or use PyTorch/Tensorflow*
