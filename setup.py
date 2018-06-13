@@ -21,5 +21,5 @@ setup(name="Vivisect",
                    "vivisect.tensorflow" : "src/tensorflow"                   
       },
       scripts=[],
-      install_requires=[]
+      install_requires=["plotnine", "mxnet>=1.3.0", "pytorch", "tensorflow"]
      )
