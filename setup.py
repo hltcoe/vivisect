@@ -3,23 +3,23 @@
 from setuptools import setup
 
 setup(name="Vivisect",
-      version="1.0.0",
+      version="1.0.1",
       description="",
       author="Tom Lippincott",
       author_email="tom@cs.jhu.edu",
       url="http://hltcoe.jhu.edu",
       maintainer="Tom Lippincott",
       maintainer_email="tom@cs.jhu.edu",
-      packages=["vivisect.server",
+      packages=["vivisect.servers",
                 "vivisect.mxnet",
                 "vivisect.pytorch",
-                "vivisect.tensorflow"                
+                "vivisect.tensorflow"
       ],
-      package_dir={"vivisect.server" : "src/server",
+      package_dir={"vivisect.servers" : "src/servers",
                    "vivisect.mxnet" : "src/mxnet",
                    "vivisect.pytorch" : "src/pytorch",
                    "vivisect.tensorflow" : "src/tensorflow"                   
       },
       scripts=[],
-      install_requires=["plotnine", "mxnet>=1.3.0", "pytorch", "tensorflow"]
+      install_requires=["plotly", "mxnet>=1.3.0", "pytorch", "tensorflow", "sockeye"]
      )
