@@ -29,7 +29,7 @@ pip install . --user
 
 *Note: Vivisect requires an MXNet version > 1.2 which includes the ability to attach hooks: until then, you'll need to [install from source](www.mxnet.com) or use PyTorch/Tensorflow*
 
-Vivisect is composed of three servers that need to be running simultaneously, e.g. run these commands in separate terminals on a single machine.  First, the `aggregator`, with whom client code directly communicates:
+Vivisect is composed of three servers that need to be running simultaneously, so e.g. run these commands in separate terminals on a single machine.  First, the `aggregator`, with whom client code directly communicates:
 
 ```bash
 python scripts/run_aggregator.py --host localhost --port 8082

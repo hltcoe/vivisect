@@ -35,9 +35,9 @@ def probe(sess, host, port, every=1):
     def _run(self, *args, **argdict):
         retval = self.run_(*args, **argdict)
         for op in self.graph.get_operations():
-            r = Request("http://{}:{}".format(host, port), method="POST", data=json.dumps({"output" : None,
+            r = Request("http://{}:{}".format(host, port), method="POST", data=json.dumps({"outputs" : None,
                                                                                            "inputs" : None,
-                                                                                           "type" : "LAYER",
+                                                                                           "op_name" : "LAYER",
                                                                                            "metadata" : {"name" : op.name,
                                                                                                          "framework" : "tensorflow",
                                                                                            },

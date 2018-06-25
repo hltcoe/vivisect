@@ -34,24 +34,30 @@ class AggregatorHandler(BaseHTTPRequestHandler):
         if j.get("command") == "flush":
             logging.info("Flushing tables")
             for model_id, iteration in self.server.state.items():
-                rval = self.server.data[model_id][-1]
-                r = Request("http://{}:{}".format(self.server.eval_host, self.server.eval_port), method="POST", data=json.dumps(rval).encode())
-                urlopen(r)
+                for op_name, vals in self.server.data[model_id].items():
+                    self.server.state[model_id]["op_name"] = op_name                    
+                    r = Request("http://{}:{}".format(self.server.eval_host, self.server.eval_port), method="POST", data=json.dumps({"data" : vals, "metadata" : self.server.state[model_id]}).encode())
+                    urlopen(r)
             self.server.state = {}
             self.server.data = {}
         else:
             logging.info("POST metadata: %s", j["metadata"])
-            val = {"metadata" : {k : v for k, v in j["metadata"].items()}}
-            if j["metadata"]["model_id"] not in self.server.state:
-                self.server.state[j["metadata"]["model_id"]] = j["metadata"]["iteration"]
-                self.server.data[j["metadata"]["model_id"]] = []
-            elif self.server.state[j["metadata"]["model_id"]] != j["metadata"]["iteration"]:
-                rval = self.server.data[j["metadata"]["model_id"]][-1]
-                r = Request("http://{}:{}".format(self.server.eval_host, self.server.eval_port), method="POST", data=json.dumps(rval).encode())
-                urlopen(r)
-                self.server.state[j["metadata"]["model_id"]] = j["metadata"]["iteration"]
-                self.server.data[j["metadata"]["model_id"]] = []
-            self.server.data[j["metadata"]["model_id"]].append(val)
+            model_id = j["metadata"]["model_id"]
+            op_name = j["metadata"]["op_name"]
+            iteration = j["metadata"]["iteration"]
+            if model_id not in self.server.state:
+                self.server.state[model_id] = j["metadata"]
+                self.server.data[model_id] = {}
+            elif self.server.state[model_id]["iteration"] != iteration:
+                for op_name, vals in self.server.data[model_id].items():
+                    self.server.state[model_id]["op_name"] = op_name
+                    r = Request("http://{}:{}".format(self.server.eval_host, self.server.eval_port), method="POST", data=json.dumps({"data" : vals, "metadata" : self.server.state[model_id]}).encode())
+                    urlopen(r)
+                self.server.state[model_id] = j["metadata"]
+                self.server.data[model_id] = {}
+            self.server.data[model_id] = self.server.data.get(model_id, {})
+            self.server.data[model_id][op_name] = self.server.data[model_id].get(op_name, [])
+            self.server.data[model_id][op_name].append((j["inputs"], j["outputs"]))
         self.send_response(200)
         self.send_header('Content-type', 'text/html')
         self.end_headers()

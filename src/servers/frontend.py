@@ -24,22 +24,31 @@ class FrontendHandler(BaseHTTPRequestHandler):
         logging.info("Processing GET request")
         self.send_response(200)
         self.send_header('Content-type', 'text/html')
-        self.end_headers()                    
+        self.end_headers()
+        self.path = self.path.replace('%20', " ")
         path_elems = self.path[1:].split("/")
         if self.path == "/":
             model_ids = set([m[0] for m in self.server.cur_.execute('''SELECT model_id from metrics''')])        
-            models = "\n".join(["<h2><a href=\"{}\">{}</a></h2>".format(m, m) for m in model_ids])
+            models = "\n".join(["<h2><a href=\"/{}\">{}</a></h2>".format(m, m) for m in model_ids])
             html = "<html><body><h1>Vivisect server</h1>{}</body></html>".format(models).encode()
         elif len(path_elems) == 1:
             model_id = path_elems[0]
+            print(model_id)
             metric_names = set([m[0] for m in self.server.cur_.execute('SELECT metric_name from metrics where model_id=?', (model_id,))])
-            metrics = "\n".join(["<h2><a href=\"{}/{}\">{}</a></h2>".format(model_id, m, m) for m in metric_names])
+            metrics = "\n".join(["<h2><a href=\"/{}/{}\">{}</a></h2>".format(model_id, m, m) for m in metric_names])
             html = "<html><body><h1>Vivisect server</h1><h2>Model {}</h2>{}</body></html>".format(model_id, metrics).encode()
         elif len(path_elems) == 2:
             model_id, metric_name = path_elems
-            vals = sorted([x for x in self.server.cur_.execute('SELECT iteration,metric_value from metrics where model_id=? and metric_name=?', (model_id,metric_name))])
-            y_plot_div = plot([Scatter(x=[x[0] for x in vals], y=[x[1] for x in vals])], output_type='div')
-            html = "<html><body><h1>Vivisect server</h1><h2>Model {}, Metric {}</h2>{}</body></html>".format(model_id, metric_name, y_plot_div).encode()
+            vals = sorted([x for x in self.server.cur_.execute('SELECT iteration,op_name,metric_value from metrics where model_id=? and metric_name=?', (model_id,metric_name))])
+            op_names = sorted(set([o for _, o, m in vals]))
+            ops = "\n".join(["<h2><a href=\"/{}/{}/{}\">{}</a></h2>".format(model_id, metric_name, m, m) for m in op_names])
+            html = "<html><body><h1>Vivisect server</h1><h2>Model {}, Metric {}</h2>{}</body></html>".format(model_id, metric_name, ops).encode()            
+        elif len(path_elems) == 3:
+            model_id, metric_name, op_name = path_elems
+            vals = sorted([x for x in self.server.cur_.execute('SELECT iteration,metric_value from metrics where model_id=? and metric_name=? and op_name=?', (model_id,metric_name,op_name))])
+            my_plot = plot([Scatter(x=[x[0] for x in vals], y=[x[1] for x in vals])], output_type='div')
+            html = "<html><body><h1>Vivisect server</h1><h2>Model {}, Metric {}, Layer {}</h2>{}</body></html>".format(model_id, metric_name, op_name, my_plot).encode()
+            pass
         else:
             html = "".encode()
         self.wfile.write(html)            
@@ -49,12 +58,13 @@ class FrontendHandler(BaseHTTPRequestHandler):
         content_length = int(self.headers['Content-Length'])
         post_data = self.rfile.read(content_length).decode()
         j = json.loads(post_data)
-        logging.info("POST metadata: %s", j["metadata"])
         model_id = j["metadata"]["model_id"]
+        op_name = j["metadata"]["op_name"]
         metric_name = j["metric_name"]
-        metric_value = j["metric_value"]
+        metric_value = j["metric_value"]        
+        logging.info("POST metadata: %s %s %s", metric_name, metric_value, j["metadata"])
         iteration = j["metadata"]["iteration"]
-        self.server.cur_.execute('''INSERT INTO metrics VALUES (?, ?, ?, ?)''', (metric_name, metric_value, iteration, model_id))
+        self.server.cur_.execute('''INSERT INTO metrics VALUES (?, ?, ?, ?, ?)''', (metric_name, metric_value, iteration, model_id, op_name))
         self.server.conn_.commit()
         self.send_response(200)
         self.send_header('Content-type', 'text/html')
@@ -67,6 +77,6 @@ class Frontend(HTTPServer):
         self.conn_ = sqlite3.connect(db_file)
         self.cur_ = self.conn_.cursor()
         try:
-            self.cur_.execute('''CREATE TABLE metrics (metric_name text, metric_value real, iteration int, model_id text)''')
+            self.cur_.execute('''CREATE TABLE metrics (metric_name text, metric_value real, iteration int, model_id text, op_name text)''')
         except:
             pass

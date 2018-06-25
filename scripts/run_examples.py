@@ -3,7 +3,6 @@ import numpy
 import logging
 import gzip
 import random
-import uuid
 from vivisect.servers import flush
 
 
@@ -33,12 +32,15 @@ if __name__ == "__main__":
     dev_class_probs = numpy.random.dirichlet([1.0 for i in range(n_mlp_labels)])
     test_class_probs = numpy.random.dirichlet([1.0 for i in range(n_mlp_labels)])
     obs_probs = numpy.random.dirichlet([1.0 for i in range(n_mlp_feats)], size=n_mlp_labels)
-    y_train = numpy.random.multinomial(1, train_class_probs, size=1000)
-    y_dev = numpy.random.multinomial(1, dev_class_probs, size=100)
-    y_test = numpy.random.multinomial(1, test_class_probs, size=100)
-    x_train = numpy.asfarray([numpy.random.multinomial(10, obs_probs[c, :], size=1) for c in y_train.argmax(1)]).squeeze()
-    x_dev = numpy.asfarray([numpy.random.multinomial(10, obs_probs[c, :], size=1) for c in y_dev.argmax(1)]).squeeze()
-    x_test = numpy.asfarray([numpy.random.multinomial(10, obs_probs[c, :], size=1) for c in y_test.argmax(1)]).squeeze()
+    y_train = numpy.asarray([random.randint(0, 2) for _ in range(1000)])
+    #numpy.random.multinomial(1, train_class_probs, size=1000)
+    y_dev = numpy.asarray([random.randint(0, 2) for _ in range(100)])
+    y_test = numpy.asarray([random.randint(0, 2) for _ in range(100)])
+    #y_dev = numpy.random.multinomial(1, dev_class_probs, size=100)
+    #y_test = numpy.random.multinomial(1, test_class_probs, size=100)
+    x_train = numpy.asfarray([numpy.random.multinomial(10, obs_probs[c, :], size=1) for c in y_train]).squeeze()
+    x_dev = numpy.asfarray([numpy.random.multinomial(10, obs_probs[c, :], size=1) for c in y_dev]).squeeze()
+    x_test = numpy.asfarray([numpy.random.multinomial(10, obs_probs[c, :], size=1) for c in y_test]).squeeze()
     
 
     # read some data for an RNN model
@@ -52,15 +54,15 @@ if __name__ == "__main__":
     random.shuffle(instances)
     instances = instances[0:500]
     train_instances = instances[0:int(.8 * len(instances))]
-    y_rnn_train = numpy.asarray([onehot(l, len(label_lookup)) for l, _ in train_instances])
+    y_rnn_train = numpy.asarray([l for l, _ in train_instances])
     lengths_rnn_train = numpy.asarray([len(cs) for _, cs in train_instances])
     x_rnn_train = numpy.asarray([[onehot(x, len(char_lookup)) for x in xs] + ([[0] * len(char_lookup)] * (max(lengths_rnn_train) - len(xs))) for _, xs in train_instances])
     dev_instances = instances[int(.8 * len(instances)) : int(.9 * len(instances))]    
-    y_rnn_dev = numpy.asarray([onehot(l, len(label_lookup)) for l, _ in dev_instances])
+    y_rnn_dev = numpy.asarray([l for l, _ in dev_instances])
     lengths_rnn_dev = numpy.asarray([len(cs) for _, cs in dev_instances])
     x_rnn_dev = numpy.asarray([[onehot(x, len(char_lookup)) for x in xs] + ([[0] * len(char_lookup)] * (max(lengths_rnn_dev) - len(xs))) for _, xs in dev_instances])
     test_instances = instances[int(.9 * len(instances)):]
-    y_rnn_test = numpy.asarray([onehot(l, len(label_lookup)) for l, _ in test_instances])
+    y_rnn_test = numpy.asarray([l for l, _ in test_instances])
     lengths_rnn_test = numpy.asarray([len(cs) for _, cs in test_instances])
     x_rnn_test = numpy.asarray([[onehot(x, len(char_lookup)) for x in xs] + ([[0] * len(char_lookup)] * (max(lengths_rnn_test) - len(xs))) for _, xs in test_instances])
     n_rnn_labels = len(label_lookup)
@@ -80,14 +82,14 @@ if __name__ == "__main__":
 
     # logging.info("MLP model")    
     # model = mlp(n_mlp_feats, n_mlp_labels, args.hidden_size)
-    # model._vivisect = {"iteration" : 0, "model_id" : str(uuid.uuid4()), "framework" : "tensorflow"}
+    # model._vivisect = {"iteration" : 0, "model_id" : "Tensorflow MLP Model", "framework" : "tensorflow"}
     # assert(isinstance(model, tensorflow.Session))
     # probe(model, args.host, args.port, monitor, perform)
     # train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, args.epochs)
     
     # logging.info("RNN model")
     # model = mlp(n_rnn_feats, n_rnn_labels, args.hidden_size)
-    # model._vivisect = {"iteration" : 0, "model_id" : str(uuid.uuid4()), "framework" : "mxnet"}    
+    # model._vivisect = {"iteration" : 0, "model_id" : "Tensorflow MLP Model", "framework" : "mxnet"}    
     # assert(isinstance(model, mxnet.gluon.Block))
     # probe(model, args.host, args.port)
     # train(model, x_rnn_train, y_rnn_train, x_rnn_dev, y_rnn_dev, x_rnn_test, y_rnn_test, args.epochs)
@@ -99,14 +101,14 @@ if __name__ == "__main__":
 
     logging.info("MLP model")    
     model = mlp(n_mlp_feats, n_mlp_labels, args.hidden_size)
-    model._vivisect = {"iteration" : 0, "model_id" : str(uuid.uuid4()), "framework" : "pytorch"}
+    model._vivisect = {"iteration" : 0, "model_id" : "PyTorch MLP Model", "framework" : "pytorch"}
     assert(isinstance(model, torch.nn.Module))
     probe(model, args.host, args.port, monitor, perform)
     train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, args.epochs)
     
     logging.info("RNN model")
     model = rnn(n_rnn_feats, n_rnn_labels, args.hidden_size)
-    model._vivisect = {"iteration" : 0, "model_id" : str(uuid.uuid4()), "framework" : "pytorch"}
+    model._vivisect = {"iteration" : 0, "model_id" : "PyTorch RNN Model", "framework" : "pytorch"}
     assert(isinstance(model, torch.nn.Module))
     probe(model, args.host, args.port, monitor, perform)
     train(model, (x_rnn_train, lengths_rnn_train), y_rnn_train, (x_rnn_dev, lengths_rnn_dev), y_rnn_dev, (x_rnn_test, lengths_rnn_test), y_rnn_test, args.epochs)
@@ -119,14 +121,14 @@ if __name__ == "__main__":
     
     logging.info("MLP model")
     model = mlp(n_mlp_feats, n_mlp_labels, args.hidden_size)
-    model._vivisect = {"iteration" : 0, "model_id" : str(uuid.uuid4()), "framework" : "mxnet"}    
+    model._vivisect = {"iteration" : 0, "model_id" : "MXNet MLP Model", "framework" : "mxnet"}    
     assert(isinstance(model, mxnet.gluon.Block))
     probe(model, args.host, args.port, monitor, perform)
     train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, args.epochs)
 
     # logging.info("RNN model")
     # model = rnn(n_rnn_feats, n_rnn_labels, args.hidden_size)
-    # model._vivisect = {"iteration" : 0, "model_id" : str(uuid.uuid4()), "framework" : "mxnet"}    
+    # model._vivisect = {"iteration" : 0, "model_id" : "MXNet RNN Model", "framework" : "mxnet"}    
     # assert(isinstance(model, mxnet.gluon.Block))
     # probe(model, args.host, args.port, monitor, perform)
     # train(model, x_rnn_train, y_rnn_train, x_rnn_dev, y_rnn_dev, x_rnn_test, y_rnn_test, args.epochs)

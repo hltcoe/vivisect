@@ -5,6 +5,7 @@ import json
 import logging
 from urllib.parse import urlparse, parse_qs
 from urllib.request import Request, urlopen
+import numpy
 
 
 class EvaluatorHandler(BaseHTTPRequestHandler):
@@ -33,8 +34,17 @@ class EvaluatorHandler(BaseHTTPRequestHandler):
         j = json.loads(post_data)
         logging.info("POST metadata: %s", j["metadata"])
         val = {"metadata" : {k : v for k, v in j["metadata"].items()}}
-        val["metric_name"] = "constant"
-        val["metric_value"] = 1.0
+        inputs = numpy.asarray([x[0] for x in j["data"]])
+        outputs = [x[1] for x in j["data"]]
+        
+        #print(numpy.array(outputs).shape, type(outputs))
+        val["metric_name"] = "sum"
+        total = 0.0
+        for batches in outputs:
+            for batch in batches:
+                total += numpy.array(batch).sum()
+        val["metric_value"] = total #sum([numpy.array(x).sum() for x in outputs])
+        #print(val)
         r = Request("http://{}:{}".format(self.server.frontend_host, self.server.frontend_port), method="POST", data=json.dumps(val).encode())
         urlopen(r)
         self.send_response(200)

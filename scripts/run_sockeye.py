@@ -94,12 +94,10 @@ if __name__ == "__main__":
             max_samples = None
             min_epochs = None
             max_epochs = None
-        #print(dir(training_model.module))
-        #probe(training_model.module, "localhost", 8080)
-        #x = training_model.module.get_params()
-        #print(x)
 
-        #sys.exit()
+        training_model.module._vivisect = {"model_id" : "Sockeye model", "iteration" : 0}
+        probe(training_model.module, "localhost", 8082)
+        
         trainer = training.EarlyStoppingTrainer(model=training_model,
                                                 optimizer_config=create_optimizer_config(args, source_vocab_sizes),
                                                 max_params_files_to_keep=args.keep_last_params,

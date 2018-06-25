@@ -8,6 +8,7 @@ import torch
 import numpy
 import logging
 import uuid
+import functools
 torch.set_default_tensor_type("torch.DoubleTensor")
 
 
@@ -18,22 +19,27 @@ def flatten(tensors):
         return [tensors]
 
 
-def probe(model, host, port, select=lambda x : True, do_send=lambda m, i, iv, ov : True):
+def probe(model, host, port, select=lambda x : True, perform=lambda m, i, iv, ov : True):
     assert(isinstance(model, nn.Module))
-    def callback(op, ivars, ovars):
+    def callback(module, ivars, ovars):
         iteration = model._vivisect["iteration"]
-        if do_send(model, op, ivars, ovars):
-            r = Request("http://{}:{}".format(host, port), method="POST", data=json.dumps({"output" : [v.data.tolist() for v in flatten(ovars)],
-                                                                                           "inputs" : [ivar.data.tolist() for ivar in ivars],
-                                                                                           "op_name" : str(op),
-                                                                                           "metadata" : getattr(model, "_vivisect", {}),
+        if perform(model, module, ivars, ovars):
+            metadata = {k : v for k, v in getattr(model, "_vivisect", {}).items()}
+            metadata["op_name"] = module._vivisect["name"]
+            #oo = [v.data.tolist() for v in flatten(ovars)]
+            #print([v.data for v in flatten(ovars)])
+            
+            r = Request("http://{}:{}".format(host, port), method="POST", data=json.dumps({"outputs" : [(v.data.tolist() if hasattr(v, "data") else []) for v in flatten(ovars)],
+                                                                                           "inputs" : [(ivar.data.tolist() if hasattr(ivar, "data") else []) for ivar in ivars],
+                                                                                           "metadata" : metadata,
             }).encode())
             urlopen(r)
             
-    for child in model.children():
-        probe(child, host, port)
-        if select(child):
-            child.register_forward_hook(callback) 
+    for name, submodule in model.named_children():
+        submodule._vivisect = getattr(submodule, "_vivisect", {})
+        submodule._vivisect["name"] = name
+        if select(submodule):
+            submodule.register_forward_hook(callback) 
 
 
 class mlp(nn.Module):
@@ -41,9 +47,10 @@ class mlp(nn.Module):
         super(mlp, self).__init__()
         self.dense1 = nn.Linear(in_features=nfeats, out_features=hidden_size)
         self.dense2 = nn.Linear(in_features=hidden_size, out_features=nlabels)
+        self.softmax = nn.LogSoftmax(dim=1)
     def forward(self, x):
         x = F.relu(self.dense1(x[0]))
-        return F.relu(self.dense2(x))
+        return self.softmax(F.relu(self.dense2(x)))
 
     
 class rnn(nn.Module):
@@ -51,33 +58,34 @@ class rnn(nn.Module):
         super(rnn, self).__init__()
         self.lstm = nn.LSTM(input_size=nfeats, hidden_size=hidden_size)
         self.dense = nn.Linear(in_features=hidden_size, out_features=nlabels)
+        self.softmax = nn.LogSoftmax(dim=1)
     def forward(self, x):
         x, l = x
         seq_lengths, perm_idx = l.sort(0, descending=True)
         xp = pack_padded_sequence(x[perm_idx], seq_lengths.tolist(), batch_first=True)
         packed_out, (ht, ct) = self.lstm(xp)
         out, _ = pad_packed_sequence(packed_out)
-        return self.dense(ht[-1])
+        return self.softmax(self.dense(ht[-1]))
 
 
 def train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, epochs, batch_size=32):
     def make_loader(vals):
         x, y = vals
         x = [torch.autograd.Variable(torch.from_numpy(numpy.asfarray(v))) for v in (x if isinstance(x, tuple) else [x])]
-        y = [torch.autograd.Variable(torch.from_numpy(numpy.asfarray(v))) for v in (y if isinstance(y, tuple) else [y])]
+        y = [torch.autograd.Variable(torch.from_numpy(numpy.asarray(v))) for v in (y if isinstance(y, tuple) else [y])]
         data = torch.utils.data.TensorDataset(*x, *y)
         return torch.utils.data.DataLoader(data, batch_size=batch_size)
-    
     x_size = len(x_train) if isinstance(x_train, (list, tuple)) else 1
     train_loader, dev_loader, test_loader = map(make_loader, [(x_train, y_train), (x_dev, y_dev), (x_test, y_test)])
-    criterion = torch.nn.MSELoss(size_average=False)
-    optimizer = torch.optim.SGD(model.parameters(), lr=1e-4)
+    criterion = torch.nn.NLLLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=.1) #1e-4)
     for t in range(epochs):
         model._vivisect["iteration"] += 1
         model._vivisect["mode"] = "train"
         train_loss = 0.0
         for i, batch in enumerate(train_loader, 1):
             y_pred = model(batch[0:x_size])
+            #print(y_pred.shape, batch[-1].shape)
             loss = criterion(y_pred, batch[-1])
             optimizer.zero_grad()
             loss.backward()
@@ -97,4 +105,4 @@ def train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, epochs, batch_s
             y_pred = model(batch[0:x_size])
             loss = criterion(y_pred, batch[-1])
             test_loss += loss.data.tolist()
-        logging.info("Train/dev/test loss: {}/{}/{}".format(train_loss, dev_loss, test_loss))        
+        logging.info("Iteration {} train/dev/test loss: {}/{}/{}".format(t + 1, train_loss, dev_loss, test_loss))        
