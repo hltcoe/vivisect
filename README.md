@@ -1,5 +1,13 @@
 # Vivisect
 
+## LSTM probe
+
+![LSTM](lstm.png)
+
+## Dense probe
+
+![Dense](dense.png)
+
 This library is intended as unified task-based introspection of neural model layers for Tensorflow, PyTorch, and MXNet.  Minimally, it consists of two components: 
 
 1.  A server, which provides a REST endpoint for receiving tensors and labels which it uses for lightweight tasks that calculate a *score* associated with each tensor's performance on each task
