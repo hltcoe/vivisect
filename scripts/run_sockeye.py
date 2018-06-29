@@ -4,6 +4,8 @@ from sockeye.train import *
 from sockeye.training import *
 from sockeye.arguments import *
 from vivisect.mxnet import probe
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 if __name__ == "__main__":
 

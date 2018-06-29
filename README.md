@@ -11,7 +11,7 @@
 This library is intended as unified task-based introspection of neural model layers for Tensorflow, PyTorch, and MXNet.  Minimally, it consists of two components: 
 
 1.  A server, which provides a REST endpoint for receiving tensors and labels which it uses for lightweight tasks that calculate a *score* associated with each tensor's performance on each task
-2.  A function, `probe`, imported from the `vivisect` library, that takes a neural model and attaches callbacks to its tensors for shipping them, along with appropriate labels, to the server, at appropriate intervals
+2.  A function, `probe`, imported from the `vivisect` library, that takes a neural model and attaches callbacks to its operations for shipping tensors, along with appropriate labels, to the server, at appropriate intervals
 
 It will support three types of *score*:
 
@@ -22,8 +22,8 @@ It will support three types of *score*:
 and three popular deep learning frameworks, with associated model classes:
 
 1.  Tensorflow *Session*
-2.  PyTorch *Module*
-3.  MXNet *Symbol* and *Block*
+2.  PyTorch *Module* (including *OpenNMT*)
+3.  MXNet *Symbol* and *Block* (including *Sockeye*)
 
 Libraries built on these frameworks should be able to use *vivisect* without modification if they subclass appropriately.
 
@@ -32,10 +32,8 @@ Libraries built on these frameworks should be able to use *vivisect* without mod
 Install the library and the supported frameworks:
 
 ```python
-pip install . --user
+pip install . --user --pre
 ```
-
-*Note: Vivisect requires an MXNet version > 1.2 which includes the ability to attach hooks: until then, you'll need to [install from source](www.mxnet.com) or use PyTorch/Tensorflow*
 
 Vivisect is composed of three servers that need to be running simultaneously, so e.g. run these commands in separate terminals on a single machine.  First, the `aggregator`, with whom client code directly communicates:
 
@@ -49,13 +47,13 @@ This server receives and accumulates layers and metadata, and when it determines
 python scripts/run_evaluator.py --host localhost --port 8081
 ```
 
-This server receives an epoch's-worth of layers at a time, i.e. enough to calculate some value for model `M`'s layer `L` at iteration `I`.  It calculates a scalar value, and sends it along to the `frontend`:
+This server receives an epoch's-worth of layers at a time, i.e. enough to calculate some value for model `M`'s operation `O` at iteration `I`.  It calculates a scalar value, and sends it along to the `frontend`:
 
 ```bash
 python scripts/run_frontend.py --host localhost --port 8080 [--database FILE]
 ```
 
-This is the server that collects and presents results, i.e. you can browse to `localhost:8080`.  Right now, the top-level page lists the models, the second level lists the metrics for a given model, and the third level plots the metric.
+This is the server that collects and presents results, i.e. you can browse to `localhost:8080`.  Right now, the top-level page lists the models, the second level lists the metrics for a given model, and the third level plots the metric for each operation as a function of time.
 
 ## Testing
 
@@ -65,7 +63,7 @@ In another terminal, run one of the tests:
 python scripts/run_examples.py --host localhost --port 8082 --epochs 5
 ```
 
-You should see output on each of the server terminals as the example models train and pass information along.  After the script returns, you can browse to the interface to see (currently, very boring) plots.
+You should see output on each of the server terminals as the example models train and pass information along.  After the script returns, you can browse to the interface to see the plots.
 
 ## Using in your code
 
@@ -81,12 +79,21 @@ probe(model, "localhost", 8080)
 <TRAIN YOUR MODEL LIKE NORMAL>
 ```
 
-This will walk through your model and attach monitors to the forward calls of every operation that ship off their output to the `aggregator` server every time they're invoked.
+This will walk through your model and attach monitors to the forward calls of every operation that ship off their input, output, and parameter tensors to the `aggregator` server every time they're invoked.
 
-```python
-probe(model, "localhost", 8080, lambda l : True, lambda m, o, id, od : True)
+For a non-trivial model, monitoring every forward call of every operation creates significant overhead, so `probe` takes two optional arguments: `what` and `when`.  These are binary functions that determine `what` operations to monitor, and `when` to monitor them.  They have the same signature, which is pretty self-explanatory:
+
+```
+(model, operation) -> Bool
 ```
 
-## MXNet from source
+Regardless of the underlying framework being used, models and operations always have a special dictionary value called `_vivisect`:
 
-MXNet is surprisingly easy to install from source, so until the official version gets bumped to include the latest Gluon refinements, you can follow the Build From Source option in [these instructions](https://mxnet.apache.org/install/index.html?platform=Linux&language=Python&processor=CPU).
+```python
+>>> print(model._vivisect)
+{'mode' : 'train', 'iteration' : 3 ... }
+```
+
+so `what` and `when` should generally make decisions based on values from these dictionaries.  The `what` decisions are made once when `probe` is called on the model, while `when` is called many times as the model is run, so the latter in particular should be as fast as possible.
+
+In addition to being used in these functions, the `_vivisect` dictionaries are serialized and sent along with the tensors to the server.  Managing these dictionaries and how they change as the model runs is done in user space.  At a minimum, the model should have `model._vivisect["mode"]` set to an appropriate value like "train", "dev", "test", and `model._vivisect["iteration"]` to the current training iteration (if you want to track how metrics co-evolve).  See e.g. the `train` method in `vivisect.pytorch` for an example.

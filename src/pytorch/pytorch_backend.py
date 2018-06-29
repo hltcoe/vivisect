@@ -26,13 +26,13 @@ def probe(model, host, port, select=lambda x : True, perform=lambda m, i, iv, ov
         if perform(model, module, ivars, ovars):
             metadata = {k : v for k, v in getattr(model, "_vivisect", {}).items()}
             metadata["op_name"] = module._vivisect["name"]
-            #oo = [v.data.tolist() for v in flatten(ovars)]
-            #print([v.data for v in flatten(ovars)])
-            
-            r = Request("http://{}:{}".format(host, port), method="POST", data=json.dumps({"outputs" : [(v.data.tolist() if hasattr(v, "data") else []) for v in flatten(ovars)],
-                                                                                           "inputs" : [(ivar.data.tolist() if hasattr(ivar, "data") else []) for ivar in ivars],
-                                                                                           "metadata" : metadata,
-            }).encode())
+            r = Request("http://{}:{}".format(host, port),
+                        method="POST",
+                        headers={"Content-Type" : "application/json"},
+                        data=json.dumps({"outputs" : [(v.data.tolist() if hasattr(v, "data") else []) for v in flatten(ovars)],
+                                         "inputs" : [(ivar.data.tolist() if hasattr(ivar, "data") else []) for ivar in ivars],
+                                         "metadata" : metadata,
+                        }).encode())
             urlopen(r)
             
     for name, submodule in model.named_children():
@@ -78,14 +78,13 @@ def train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, epochs, batch_s
     x_size = len(x_train) if isinstance(x_train, (list, tuple)) else 1
     train_loader, dev_loader, test_loader = map(make_loader, [(x_train, y_train), (x_dev, y_dev), (x_test, y_test)])
     criterion = torch.nn.NLLLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=.1) #1e-4)
+    optimizer = torch.optim.SGD(model.parameters(), lr=.1)
     for t in range(epochs):
         model._vivisect["iteration"] += 1
         model._vivisect["mode"] = "train"
         train_loss = 0.0
         for i, batch in enumerate(train_loader, 1):
             y_pred = model(batch[0:x_size])
-            #print(y_pred.shape, batch[-1].shape)
             loss = criterion(y_pred, batch[-1])
             optimizer.zero_grad()
             loss.backward()
@@ -105,4 +104,4 @@ def train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, epochs, batch_s
             y_pred = model(batch[0:x_size])
             loss = criterion(y_pred, batch[-1])
             test_loss += loss.data.tolist()
-        logging.info("Iteration {} train/dev/test loss: {}/{}/{}".format(t + 1, train_loss, dev_loss, test_loss))        
+        logging.info("Iteration {} train/dev/test loss: {:.4f}/{:.4f}/{:.4f}".format(t + 1, train_loss, dev_loss, test_loss))

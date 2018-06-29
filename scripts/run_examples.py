@@ -1,9 +1,13 @@
 import argparse
 import numpy
+import warnings
 import logging
 import gzip
 import random
-from vivisect.servers import flush
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+from vivisect.servers import flush, clear
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 
 def onehot(i, r):
@@ -16,10 +20,12 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", dest="host", default="0.0.0.0", help="Host name")
-    parser.add_argument("--port", dest="port", default=39628, type=int, help="Port number")
+    parser.add_argument("--port", dest="port", default=8082, type=int, help="Port number")
+    parser.add_argument("--frontend_host", dest="frontend_host", default="0.0.0.0", help="Host name")
+    parser.add_argument("--frontend_port", dest="frontend_port", default=8080, type=int, help="Port number")
     parser.add_argument("--epochs", dest="epochs", default=10, type=int, help="Maximum training epochs")
     parser.add_argument("--hidden_size", dest="hidden_size", default=50, type=int, help="Hidden size for MLPs/LSTMs")
-    parser.add_argument("--input", dest="input", default="data/language.txt.gz", help="")
+    parser.add_argument("--input", dest="input", default="data/lid.txt.gz", help="")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
@@ -33,11 +39,8 @@ if __name__ == "__main__":
     test_class_probs = numpy.random.dirichlet([1.0 for i in range(n_mlp_labels)])
     obs_probs = numpy.random.dirichlet([1.0 for i in range(n_mlp_feats)], size=n_mlp_labels)
     y_train = numpy.asarray([random.randint(0, 2) for _ in range(1000)])
-    #numpy.random.multinomial(1, train_class_probs, size=1000)
     y_dev = numpy.asarray([random.randint(0, 2) for _ in range(100)])
     y_test = numpy.asarray([random.randint(0, 2) for _ in range(100)])
-    #y_dev = numpy.random.multinomial(1, dev_class_probs, size=100)
-    #y_test = numpy.random.multinomial(1, test_class_probs, size=100)
     x_train = numpy.asfarray([numpy.random.multinomial(10, obs_probs[c, :], size=1) for c in y_train]).squeeze()
     x_dev = numpy.asfarray([numpy.random.multinomial(10, obs_probs[c, :], size=1) for c in y_dev]).squeeze()
     x_test = numpy.asfarray([numpy.random.multinomial(10, obs_probs[c, :], size=1) for c in y_test]).squeeze()
@@ -52,7 +55,7 @@ if __name__ == "__main__":
             label, text = line.strip().split("\t")
             instances.append((label_lookup.setdefault(label, len(label_lookup)), [0] + [char_lookup.setdefault(c, len(char_lookup)) for c in text] + [1]))
     random.shuffle(instances)
-    instances = instances[0:500]
+    instances = instances[0:100]
     train_instances = instances[0:int(.8 * len(instances))]
     y_rnn_train = numpy.asarray([l for l, _ in train_instances])
     lengths_rnn_train = numpy.asarray([len(cs) for _, cs in train_instances])
@@ -73,62 +76,65 @@ if __name__ == "__main__":
         return True
 
     def perform(model, op, inputs, outputs):
-        return model._vivisect["mode"] == "test"
+        return model._vivisect["mode"] == "train"
+
+    clear(args.host, args.port)
+    clear(args.frontend_host, args.frontend_port)
+
     
-    
-    # logging.info("Testing with Tensorflow 'Session'")
-    # import tensorflow
-    # from vivisect.tensorflow import probe, train, mlp, rnn
+    logging.info("Testing with Tensorflow 'Session'")
+    import tensorflow
+    from vivisect.tensorflow import probe, train, mlp, rnn
 
     # logging.info("MLP model")    
     # model = mlp(n_mlp_feats, n_mlp_labels, args.hidden_size)
-    # model._vivisect = {"iteration" : 0, "model_id" : "Tensorflow MLP Model", "framework" : "tensorflow"}
+    # model._vivisect = {"iteration" : 0, "model_name" : "Tensorflow MLP Model", "framework" : "tensorflow"}
     # assert(isinstance(model, tensorflow.Session))
-    # probe(model, args.host, args.port, monitor, perform)
+    # probe(model, args.host, args.port, lambda m : m.name in ["layer1/bias", "layer2/bias"], perform)
     # train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, args.epochs)
-    
-    # logging.info("RNN model")
-    # model = mlp(n_rnn_feats, n_rnn_labels, args.hidden_size)
-    # model._vivisect = {"iteration" : 0, "model_id" : "Tensorflow MLP Model", "framework" : "mxnet"}    
-    # assert(isinstance(model, mxnet.gluon.Block))
-    # probe(model, args.host, args.port)
-    # train(model, x_rnn_train, y_rnn_train, x_rnn_dev, y_rnn_dev, x_rnn_test, y_rnn_test, args.epochs)
-    
-
-    logging.info("Testing with PyTorch 'Module'")
-    import torch    
-    from vivisect.pytorch import probe, train, mlp, rnn
-
-    logging.info("MLP model")    
-    model = mlp(n_mlp_feats, n_mlp_labels, args.hidden_size)
-    model._vivisect = {"iteration" : 0, "model_id" : "PyTorch MLP Model", "framework" : "pytorch"}
-    assert(isinstance(model, torch.nn.Module))
-    probe(model, args.host, args.port, monitor, perform)
-    train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, args.epochs)
     
     logging.info("RNN model")
     model = rnn(n_rnn_feats, n_rnn_labels, args.hidden_size)
-    model._vivisect = {"iteration" : 0, "model_id" : "PyTorch RNN Model", "framework" : "pytorch"}
-    assert(isinstance(model, torch.nn.Module))
-    probe(model, args.host, args.port, monitor, perform)
+    model._vivisect = {"iteration" : 0, "model_name" : "Tensorflow RNNe Model", "framework" : "tensorflow"}
+    assert(isinstance(model, tensorflow.Session))
+    probe(model, args.host, args.port)
     train(model, (x_rnn_train, lengths_rnn_train), y_rnn_train, (x_rnn_dev, lengths_rnn_dev), y_rnn_dev, (x_rnn_test, lengths_rnn_test), y_rnn_test, args.epochs)
-
     
-    logging.info("Testing with MXNet 'Block'")
-    import mxnet
-    from vivisect.mxnet import probe, train, rnn, mlp
-    from mxnet.gluon import Block, HybridBlock, SymbolBlock, Trainer
-    
-    logging.info("MLP model")
-    model = mlp(n_mlp_feats, n_mlp_labels, args.hidden_size)
-    model._vivisect = {"iteration" : 0, "model_id" : "MXNet MLP Model", "framework" : "mxnet"}    
-    assert(isinstance(model, mxnet.gluon.Block))
-    probe(model, args.host, args.port, monitor, perform)
-    train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, args.epochs)
 
-    # logging.info("RNN model")
+    # logging.info("Testing with PyTorch 'Module'")
+    # import torch    
+    # from vivisect.pytorch import probe, train, mlp, rnn
+
+    # logging.info("PyTorch MLP model")    
+    # model = mlp(n_mlp_feats, n_mlp_labels, args.hidden_size)
+    # model._vivisect = {"iteration" : 0, "model_name" : "PyTorch MLP Model", "framework" : "pytorch"}
+    # assert(isinstance(model, torch.nn.Module))
+    # probe(model, args.host, args.port, monitor, perform)
+    # train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, args.epochs)
+    
+    # logging.info("PyTorch RNN model")
     # model = rnn(n_rnn_feats, n_rnn_labels, args.hidden_size)
-    # model._vivisect = {"iteration" : 0, "model_id" : "MXNet RNN Model", "framework" : "mxnet"}    
+    # model._vivisect = {"iteration" : 0, "model_name" : "PyTorch RNN Model", "framework" : "pytorch"}
+    # assert(isinstance(model, torch.nn.Module))
+    # probe(model, args.host, args.port, monitor, perform)
+    # train(model, (x_rnn_train, lengths_rnn_train), y_rnn_train, (x_rnn_dev, lengths_rnn_dev), y_rnn_dev, (x_rnn_test, lengths_rnn_test), y_rnn_test, args.epochs)
+
+    
+    # logging.info("Testing with MXNet 'Block'")
+    # import mxnet
+    # from vivisect.mxnet import probe, train, mlp, rnn
+    # from mxnet.gluon import Block, HybridBlock, SymbolBlock, Trainer
+    
+    # logging.info("MXNet MLP model")
+    # model = mlp(n_mlp_feats, n_mlp_labels, args.hidden_size)
+    # model._vivisect = {"iteration" : 0, "model_name" : "MXNet MLP Model", "framework" : "mxnet"}    
+    # assert(isinstance(model, mxnet.gluon.Block))
+    # probe(model, args.host, args.port)
+    # train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, args.epochs)
+    
+    # logging.info("MXNet RNN model")
+    # model = rnn(n_rnn_feats, n_rnn_labels, args.hidden_size)
+    # model._vivisect = {"iteration" : 0, "model_name" : "MXNet RNN Model", "framework" : "mxnet"}    
     # assert(isinstance(model, mxnet.gluon.Block))
     # probe(model, args.host, args.port, monitor, perform)
     # train(model, x_rnn_train, y_rnn_train, x_rnn_dev, y_rnn_dev, x_rnn_test, y_rnn_test, args.epochs)

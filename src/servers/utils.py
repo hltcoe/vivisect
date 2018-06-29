@@ -3,5 +3,9 @@ from urllib.request import Request, urlopen
 import json
 
 def flush(host, port):
-    r = Request("http://{}:{}".format(host, port), method="POST", data=json.dumps({"command" : "flush"}).encode())
+    r = Request("http://{}:{}/flush".format(host, port), method="POST")
     urlopen(r)
+
+def clear(host, port):
+    r = Request("http://{}:{}/clear".format(host, port), method="POST")
+    urlopen(r)    

@@ -1,0 +1,9 @@
+version: '3'
+
+services:
+  frontend:
+    build: .
+    image: hltcoe/vivisect
+    ports: [8080]
+    command: frontend
+    #expose: [8080]

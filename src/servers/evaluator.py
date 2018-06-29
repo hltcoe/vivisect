@@ -1,60 +1,54 @@
 import sqlite3
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from socketserver import TCPServer
 import json
 import logging
 from urllib.parse import urlparse, parse_qs
 from urllib.request import Request, urlopen
 import numpy
+from flask import Flask, request
+import functools
 
 
-class EvaluatorHandler(BaseHTTPRequestHandler):
-
-    def _set_headers(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-
-    def do_HEAD(self):
-        logging.info("Processing HEAD request")
-        self._set_headers()        
-    
-    def do_GET(self):
-        logging.info("Processing GET request")
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-        print(self.headers)
-        self.wfile.write("<html><body><h1>Vivisect evaluator</h1></body></html>".encode())        
-
-    def do_POST(self):
-        logging.info("Processing POST request")
-        content_length = int(self.headers['Content-Length'])
-        post_data = self.rfile.read(content_length).decode()
-        j = json.loads(post_data)
-        logging.info("POST metadata: %s", j["metadata"])
-        val = {"metadata" : {k : v for k, v in j["metadata"].items()}}
-        inputs = numpy.asarray([x[0] for x in j["data"]])
-        outputs = [x[1] for x in j["data"]]
-        
-        #print(numpy.array(outputs).shape, type(outputs))
-        val["metric_name"] = "sum"
-        total = 0.0
-        for batches in outputs:
-            for batch in batches:
-                total += numpy.array(batch).sum()
-        val["metric_value"] = total #sum([numpy.array(x).sum() for x in outputs])
-        #print(val)
-        r = Request("http://{}:{}".format(self.server.frontend_host, self.server.frontend_port), method="POST", data=json.dumps(val).encode())
-        urlopen(r)
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-
-            
-class Evaluator(HTTPServer):
-    def __init__(self, address, frontend_host, frontend_port):
-        super(Evaluator, self).__init__(address, EvaluatorHandler)
+class Evaluator(Flask):
+    def __init__(self, frontend_host, frontend_port):
+        super(Evaluator, self).__init__("Evaluator")
+        self._metrics = {}
         self.frontend_host = frontend_host
         self.frontend_port = frontend_port
+        @self.route("/", methods=["GET", "POST"])
+        def handle():
+            if request.method == "GET":                
+                return "Evaluator server"
+            elif request.method == "POST":                
+                j = request.get_json()
+                inputs = numpy.asarray([x[0] for x in j["data"]])
+                outputs = [x[1] for x in j["data"]]
+                for name, callback in self._metrics.items():
+                    retval = {"metadata" : {k : v for k, v in j["metadata"].items()}}
+                    retval["metric_name"] = name
+                    retval["metric_value"] = callback(inputs, outputs, j["metadata"])
+                    r = Request("http://{}:{}".format(self.frontend_host, self.frontend_port),
+                                method="POST",
+                                headers={"Content-Type" : "application/json"},
+                                data=json.dumps(retval).encode())
+                    urlopen(r)
+                return "OK"
 
+    def register_metric(self, name, callback):
+        self._metrics[name] = callback
+
+
+def average_activation(inputs, outputs, metadata):
+    total = 0.0
+    count = 0
+    for batches in outputs:
+        for batch in batches:
+            np = numpy.array(batch)
+            total += np.sum()
+            count += functools.reduce(lambda x, y : x * y, np.shape)
+    return 0.0 if count == 0 else total / count
+
+
+def create_server(frontend_host, frontend_port):
+    server = Evaluator(frontend_host, frontend_port)
+    server.register_metric("Average activation", average_activation)
+    return server

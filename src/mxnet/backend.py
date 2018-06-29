@@ -8,7 +8,6 @@ from mxnet import init
 from mxnet import io
 from mxnet.gluon import Block, HybridBlock, SymbolBlock, Trainer
 from mxnet.gluon.nn import Sequential, Dense
-from mxnet.gluon.rnn import LSTM
 from sockeye.training import TrainingModel
 import numpy
 from urllib.request import urlopen, Request
@@ -17,40 +16,32 @@ import logging
 from types import MethodType
 
 
-def probe(model, host, port, select=lambda x : True, perform=lambda m, i, iv, ov : True):
+
+
+
+
+
+
+
+def probe(model, host, port, every=1, select=lambda x : True):
     assert(isinstance(model, (Block, mxnet.module.BaseModule)))
     if isinstance(model, Block):
-        def callback(op, ivars, ovars):
-            if perform(model, op, ivars, ovars):
-                metadata = {k : v for k, v in getattr(model, "_vivisect", {}).items()}
-                metadata["op_name"] = op.name
-                r = Request("http://{}:{}".format(host, port),
-                            method="POST",
-                            headers={"Content-Type" : "application/json"},
-                            data=json.dumps({"outputs" : [ovar.asnumpy().tolist() for ovar in (ovars if isinstance(ovars, list) else [ovars])],
-                                             "inputs" : [ivar.asnumpy().tolist() for ivar in ivars],
-                                             "metadata" : metadata,
-                            }).encode())
-                urlopen(r)
-        def register(m):
-            if select(m):
-                m.register_forward_hook(callback)
-        model.apply(register)
+        def callback(op, ivars, ovar):
+            r = Request("http://{}:{}".format(host, port), method="POST", data=json.dumps({"output" : ovar.asnumpy().tolist(),
+                                                                                           "inputs" : [ivar.asnumpy().tolist() for ivar in ivars],
+                                                                                           "type" : "LAYER",
+                                                                                           "metadata" : {"name" : str(op).replace("\n", " "),
+                                                                                                         "framework" : "mxnet",
+                                                                                           },
+            }).encode())
+            urlopen(r)
+        model.apply(lambda m : m.register_forward_hook(callback))
     elif isinstance(model, mxnet.module.BaseModule):
         def callback(self, *args, **argdict):
             retval = self.forward_(*args, **argdict)
-            metadata = {k : v for k, v in getattr(model, "_vivisect", {}).items()}
-            metadata["op_name"] = self._symbol.name
-            r = Request("http://{}:{}".format(host, port), method="POST", data=json.dumps({"outputs" : [o.asnumpy().tolist() for o in retval],
-                                                                                           "inputs" : [],
-                                                                                           "metadata" : metadata,
-            }).encode())
-            urlopen(r)
-
-
-            #print(retval)
+            print(retval)
             #print(self.output_dict) #retval)
-            #return retval
+            return retval
 
         class Monitor:
             def install(self, exe):
@@ -95,56 +86,40 @@ def probe(model, host, port, select=lambda x : True, perform=lambda m, i, iv, ov
         # model._monitor = Monitor(model)
 
     
-class mlp(Sequential):
-    def __init__(self, nfeats, nlabels, hidden_size):
-        super(mlp, self).__init__()
-        self.add(Dense(hidden_size))
-        self.add(Dense(nlabels))
+class BlockModel(Sequential):
+    def __init__(self):
+        super(BlockModel, self).__init__()
+        self.add(Dense(20))
+        self.add(Dense(3))
+
+    
+def block_mlp():
+    return BlockModel()
 
 
-class rnn(Sequential):
-    def __init__(self, nfeats, nlabels, hidden_size):
-        super(rnn, self).__init__()
-        self.add(LSTM(hidden_size))
-        self.add(Dense(nlabels))
+def symbol_mlp():
+    data = symbol.Variable("data")
+    first_layer = symbol.FullyConnected(data=data, num_hidden=20)
+    second_layer = symbol.FullyConnected(data=first_layer, num_hidden=3)
+    return data, second_layer
 
 
-def train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, epochs):
+def train(model, x_train, y_train, x_dev, y_dev, epochs):
     model.initialize()
-
-    x_train = nd.array(x_train)
-    y_train = nd.array(y_train)
-    x_dev = nd.array(x_dev)
-    y_dev = nd.array(y_dev)
-    x_test = nd.array(x_test)
-    y_test = nd.array(y_test)
-
-    criterion = mxnet.gluon.loss.SoftmaxCrossEntropyLoss(sparse_label=True)
+    criterion = mxnet.gluon.loss.SoftmaxCrossEntropyLoss(sparse_label=False)
     trainer = mxnet.gluon.Trainer(model.collect_params(), 'sgd', {'learning_rate': 0.1})
+
+    x_train = nd.array(numpy.asfarray(x_train))
+    y_train = nd.array(numpy.asfarray(y_train))
+    x_dev = nd.array(numpy.asfarray(x_dev))
+    y_dev = nd.array(numpy.asfarray(y_dev))
     
     for t in range(epochs):
-        model._vivisect["iteration"] += 1
-        model._vivisect["mode"] = "train"
         with mxnet.autograd.record():
             y_pred = model(x_train)
             loss = criterion(y_pred, y_train)
         loss.backward()
         trainer.step(y_train.shape[0])
-        train_loss = mxnet.nd.sum(loss).asscalar()
-        dev_loss = train_loss
-        test_loss = dev_loss
-        
-        #model._vivisect["mode"] = "dev"
-        #with mxnet.autograd.record():
-        #    y_pred = model(x_dev)
-        #    loss = criterion(y_pred, y_dev)
-        #dev_loss = mxnet.nd.sum(loss).asscalar()
+        logging.info("Train loss: {}".format(mxnet.nd.sum(loss).asscalar()))
 
-        # model._vivisect["mode"] = "test"
-        # with mxnet.autograd.record():
-        #     y_pred = model(x_test)
-        #     loss = criterion(y_pred, y_test)
-        # test_loss = mxnet.nd.sum(loss).asscalar()
-        
-        logging.info("Iteration {} train/dev/test loss: {:.4f}/{:.4f}/{:.4f}".format(t + 1, train_loss, dev_loss, test_loss))
     

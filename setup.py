@@ -2,6 +2,10 @@
 
 from setuptools import setup
 
+frameworks = ["pytorch", "mxnet", "tensorflow"]
+model_types = ["mlp", "rnn"]
+special_cases = ["sockeye", "opennmt"]
+
 setup(name="Vivisect",
       version="1.0.1",
       description="",
@@ -18,8 +22,7 @@ setup(name="Vivisect",
       package_dir={"vivisect.servers" : "src/servers",
                    "vivisect.mxnet" : "src/mxnet",
                    "vivisect.pytorch" : "src/pytorch",
-                   "vivisect.tensorflow" : "src/tensorflow"                   
+                   "vivisect.tensorflow" : "src/tensorflow",
       },
-      scripts=[],
-      install_requires=["plotly", "mxnet>=1.3.0", "pytorch", "tensorflow", "sockeye"]
+      install_requires=["flask>=1.0.0", "plotly", "mxnet>1.2.0", "torch", "tensorflow", "sockeye", "OpenNMT-py>=0.2"]
      )

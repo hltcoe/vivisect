@@ -5,68 +5,65 @@ import json
 import logging
 from urllib.parse import urlparse, parse_qs
 from urllib.request import Request, urlopen
+from flask import Flask, request
 
-class AggregatorHandler(BaseHTTPRequestHandler):
 
-    # self.server
-    def _set_headers(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-
-    def do_HEAD(self):
-        logging.info("Processing HEAD request")
-        self._set_headers()        
+class Aggregator(Flask):
     
-    def do_GET(self):
-        logging.info("Processing GET request")
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-        print(self.headers)
-        self.wfile.write("<html><body><h1>Vivisect evaluator</h1></body></html>".encode())        
-
-    def do_POST(self):
-        logging.info("Processing POST request")
-        content_length = int(self.headers['Content-Length'])
-        post_data = self.rfile.read(content_length).decode()        
-        j = json.loads(post_data)
-        if j.get("command") == "flush":
-            logging.info("Flushing tables")
-            for model_id, iteration in self.server.state.items():
-                for op_name, vals in self.server.data[model_id].items():
-                    self.server.state[model_id]["op_name"] = op_name                    
-                    r = Request("http://{}:{}".format(self.server.eval_host, self.server.eval_port), method="POST", data=json.dumps({"data" : vals, "metadata" : self.server.state[model_id]}).encode())
-                    urlopen(r)
-            self.server.state = {}
-            self.server.data = {}
-        else:
-            logging.info("POST metadata: %s", j["metadata"])
-            model_id = j["metadata"]["model_id"]
-            op_name = j["metadata"]["op_name"]
-            iteration = j["metadata"]["iteration"]
-            if model_id not in self.server.state:
-                self.server.state[model_id] = j["metadata"]
-                self.server.data[model_id] = {}
-            elif self.server.state[model_id]["iteration"] != iteration:
-                for op_name, vals in self.server.data[model_id].items():
-                    self.server.state[model_id]["op_name"] = op_name
-                    r = Request("http://{}:{}".format(self.server.eval_host, self.server.eval_port), method="POST", data=json.dumps({"data" : vals, "metadata" : self.server.state[model_id]}).encode())
-                    urlopen(r)
-                self.server.state[model_id] = j["metadata"]
-                self.server.data[model_id] = {}
-            self.server.data[model_id] = self.server.data.get(model_id, {})
-            self.server.data[model_id][op_name] = self.server.data[model_id].get(op_name, [])
-            self.server.data[model_id][op_name].append((j["inputs"], j["outputs"]))
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-
-            
-class Aggregator(HTTPServer):
-    def __init__(self, address, eval_host, eval_port):
-        super(Aggregator, self).__init__(address, AggregatorHandler)
+    def __init__(self, eval_host, eval_port):
+        super(Aggregator, self).__init__("Aggregator")
         self.eval_host = eval_host
         self.eval_port = eval_port
         self.data = {}
         self.state = {}
+
+        @self.route("/clear", methods=["POST"])
+        def clear():
+            self.state = {}
+            self.data = {}
+            return "OK"
+            
+        @self.route("/flush", methods=["POST"])
+        def flush():
+            logging.info("Flushing tables")
+            for model_id, iteration in self.state.items():
+                for op_name, vals in self.data[model_id].items():
+                    self.state[model_id]["op_name"] = op_name                    
+                    r = Request("http://{}:{}".format(self.eval_host, self.eval_port),
+                                method="POST",
+                                headers={"Content-Type" : "application/json"},
+                                data=json.dumps({"data" : vals, "metadata" : self.state[model_id]}).encode())
+                    urlopen(r)
+            self.state = {}
+            self.data = {}
+            return "OK"
+        
+        @self.route("/", methods=["GET", "POST"])
+        def handle():
+            if request.method == "GET":
+                return "Aggregator server"
+            elif request.method == "POST":
+                j = request.get_json()
+                model_name = j["metadata"]["model_name"]
+                op_name = j["metadata"]["op_name"]
+                iteration = j["metadata"]["iteration"]
+                if model_name not in self.state:
+                    self.state[model_name] = j["metadata"]
+                    self.data[model_name] = {}
+                elif self.state[model_name]["iteration"] != iteration:
+                    for op_name, vals in self.data[model_name].items():
+                        self.state[model_name]["op_name"] = op_name
+                        r = Request("http://{}:{}".format(self.eval_host, self.eval_port),
+                                    method="POST",
+                                    headers={"Content-Type" : "application/json"},
+                                    data=json.dumps({"data" : vals, "metadata" : self.state[model_name]}).encode())
+                        urlopen(r)
+                    self.state[model_name] = j["metadata"]
+                    self.data[model_name] = {}
+                self.data[model_name] = self.data.get(model_name, {})
+                self.data[model_name][op_name] = self.data[model_name].get(op_name, [])
+                self.data[model_name][op_name].append((j["inputs"], j["outputs"]))
+                return "OK"
+                
+def create_server(eval_host, eval_port):
+    return Aggregator(eval_host, eval_port)
