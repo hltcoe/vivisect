@@ -24,6 +24,9 @@ import onmt.opts as opts
 import gzip
 import tempfile
 import shutil
+import logging
+from vivisect.pytorch import probe
+from vivisect.servers import clear, flush
 
 
 def check_existing_pt_files(opt):
@@ -37,23 +40,6 @@ def check_existing_pt_files(opt):
             sys.stderr.write("Please backup existing pt file: %s, "
                              "to avoid tampering!\n" % pattern)
             sys.exit(1)
-
-
-def parse_preprocess_args():
-    """ Parsing arguments """
-    parser = argparse.ArgumentParser(
-        description='preprocess.py',
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-
-    opts.add_md_help_argument(parser)
-    opts.preprocess_opts(parser)
-
-    opt = parser.parse_args()
-    torch.manual_seed(opt.seed)
-
-    check_existing_pt_files(opt)
-
-    return opt
 
 
 def build_save_in_shards(src_corpus, tgt_corpus, fields,
@@ -196,35 +182,7 @@ def build_save_vocab(train_dataset, fields, opt, logger=None):
     torch.save(inputters.save_fields_to_vocab(fields), vocab_file)
 
 
-def preprocess_main():
-    opt = parse_preprocess_args()
-    logger = get_logger(opt.log_file)
-    logger.info("Extracting features...")
-
-    src_nfeats = inputters.get_num_features(
-        opt.data_type, opt.train_src, 'src')
-    tgt_nfeats = inputters.get_num_features(
-        opt.data_type, opt.train_tgt, 'tgt')
-    logger.info(" * number of source features: %d." % src_nfeats)
-    logger.info(" * number of target features: %d." % tgt_nfeats)
-
-    logger.info("Building `Fields` object...")
-    fields = inputters.get_fields(opt.data_type, src_nfeats, tgt_nfeats)
-
-    logger.info("Building & saving training data...")
-    train_dataset_files = build_save_dataset('train', fields, opt, logger)
-
-    logger.info("Building & saving vocabulary...")
-    build_save_vocab(train_dataset_files, fields, opt, logger)
-
-    logger.info("Building & saving validation data...")
-    build_save_dataset('valid', fields, opt, logger)
-
-
-#*****
-
-
-def _check_save_model_path():
+def _check_save_model_path(opt):
     save_model_path = os.path.abspath(opt.save_model)
     model_dirname = os.path.dirname(save_model_path)
     if not os.path.exists(model_dirname):
@@ -305,8 +263,11 @@ def training_main(opt):
     # Build model.
     model = build_model(model_opt, opt, fields, checkpoint)
     _tally_parameters(model)
-    _check_save_model_path()
+    _check_save_model_path(opt)
 
+    model._vivisect = {"iteration" : 0, "model_name" : "OpenNMT Model", "framework" : "pytorch", "mode" : "train"}
+    probe(model, "localhost", 8082)
+    
     # Build optimizer.
     optim = build_optim(model, opt, checkpoint)
 
@@ -316,11 +277,14 @@ def training_main(opt):
     trainer = build_trainer(
         opt, model, fields, optim, data_type, model_saver=model_saver)
 
-    def train_iter_fct(): return build_dataset_iter(
-        lazily_load_dataset("train", opt), fields, opt)
+    def train_iter_fct():
+        model._vivisect["iteration"] += 1
+        model._vivisect["mode"] = "train"
+        return build_dataset_iter(lazily_load_dataset("train", opt), fields, opt)
 
-    def valid_iter_fct(): return build_dataset_iter(
-        lazily_load_dataset("valid", opt), fields, opt)
+    def valid_iter_fct():
+        model._vivisect["mode"] = "dev"
+        return build_dataset_iter(lazily_load_dataset("valid", opt), fields, opt)
 
     # Do training.
     trainer.train(train_iter_fct, valid_iter_fct, opt.start_epoch, opt.epochs)
@@ -328,26 +292,95 @@ def training_main(opt):
     if opt.tensorboard:
         trainer.report_manager.tensorboard_writer.close()
 
+        
+def preprocess_main(opt):
+    logger = get_logger(opt.log_file)
+    src_nfeats = inputters.get_num_features(
+        opt.data_type, opt.train_src, 'src')
+    tgt_nfeats = inputters.get_num_features(
+        opt.data_type, opt.train_tgt, 'tgt')
+    logger.info(" * number of source features: %d." % src_nfeats)
+    logger.info(" * number of target features: %d." % tgt_nfeats)
 
+    logger.info("Building `Fields` object...")
+    fields = inputters.get_fields(opt.data_type, src_nfeats, tgt_nfeats)
 
-def train_main_():    
-    parser = argparse.ArgumentParser(
-        description='train.py',
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    logger.info("Building & saving training data...")
+    train_dataset_files = build_save_dataset('train', fields, opt, logger)
 
-    opts.add_md_help_argument(parser)
-    opts.model_opts(parser)
-    opts.train_opts(parser)
+    logger.info("Building & saving vocabulary...")
+    build_save_vocab(train_dataset_files, fields, opt, logger)
 
-    opt = parser.parse_args()
-    main(opt)
+    logger.info("Building & saving validation data...")
+    build_save_dataset('valid', fields, opt, logger)
+
 
 if __name__ == "__main__":
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--source", dest="source")
+    parser.add_argument("--target", dest="target")
+    parser.add_argument("--epochs", dest="epochs", default=10, type=int)
+    args = parser.parse_args()
+    
     temp = tempfile.mkdtemp()
+    
+    source = []
+    with gzip.open(args.source, "rt") as ifd:
+            for line in ifd:
+                source.append(line)
+                
+    target = []
+    with gzip.open(args.target, "rt") as ifd:
+            for line in ifd:
+                target.append(line)
+        
+    pairs = list(zip(source, target))
+    random.shuffle(pairs)
+    os.mkdir(os.path.join(temp, "data"))
+    
+    with open(os.path.join(temp, "data", "train_source.txt"), "wt") as sofd, open(os.path.join(temp, "data", "train_target.txt"), "wt") as tofd:
+        for s, t in pairs[0:int(.9 * len(pairs))]:
+            sofd.write(s)
+            tofd.write(t)
+            
+    with open(os.path.join(temp, "data", "dev_source.txt"), "wt") as sofd, open(os.path.join(temp, "data", "dev_target.txt"), "wt") as tofd:
+        for s, t in pairs[int(.9 * len(pairs)):]:
+            sofd.write(s)
+            tofd.write(t)
+    
+    preproc_parser = argparse.ArgumentParser(
+        description='vivisect example',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    
+    opts.add_md_help_argument(preproc_parser)
+    opts.preprocess_opts(preproc_parser)
+    
+    preproc_args = preproc_parser.parse_args(args=["-train_src", os.path.join(temp, "data", "train_source.txt"),
+                                                   "-train_tgt", os.path.join(temp, "data", "train_target.txt"),
+                                                   "-valid_src", os.path.join(temp, "data", "dev_target.txt"),
+                                                   "-valid_tgt", os.path.join(temp, "data", "dev_target.txt"),
+                                                   "-save_data", os.path.join(temp, "data", "out")])
+
+    train_parser = argparse.ArgumentParser(
+        description='vivisect example',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    opts.add_md_help_argument(train_parser)
+    opts.model_opts(train_parser)
+    opts.train_opts(train_parser)
+    train_args = train_parser.parse_args(["-data", os.path.join(temp, "data/out"),
+                                          "-epochs", str(args.epochs),
+                                          "-save_model", os.path.join(temp, "model")])
+
+    clear("localhost", 8082)
+    
     try:
-        #preprocess_main()
-        print(temp)
-    except:
-        pass
-    finally:        
+        torch.manual_seed(preproc_args.seed)
+        check_existing_pt_files(preproc_args)
+        preprocess_main(preproc_args)
+        training_main(train_args)
+    except Exception as e:
+        raise e
+    finally:
+        flush("localhost", 8082)
         shutil.rmtree(temp)

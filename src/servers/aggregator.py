@@ -44,9 +44,13 @@ class Aggregator(Flask):
                 return "Aggregator server"
             elif request.method == "POST":
                 j = request.get_json()
+
                 model_name = j["metadata"]["model_name"]
                 op_name = j["metadata"]["op_name"]
-                iteration = j["metadata"]["iteration"]
+                iteration = max(1, j["metadata"]["iteration"])
+                j["metadata"]["iteration"] = iteration
+                logging.info("Model: %s, Iteration: %s", model_name, iteration)
+                print("Model: %s, Iteration: %s" % (model_name, iteration))
                 if model_name not in self.state:
                     self.state[model_name] = j["metadata"]
                     self.data[model_name] = {}

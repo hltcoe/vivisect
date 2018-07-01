@@ -37,7 +37,18 @@ class Evaluator(Flask):
         self._metrics[name] = callback
 
 
-def average_activation(inputs, outputs, metadata):
+def average_absolute_activation(inputs, outputs, metadata):
+    total = 0.0
+    count = 0
+    for batches in outputs:
+        for batch in batches:
+            np = numpy.abs(numpy.array(batch))
+            total += np.sum()
+            count += functools.reduce(lambda x, y : x * y, np.shape)
+    return 0.0 if count == 0 else total / count
+
+
+def average_absolute_value(inputs, outputs, metadata):
     total = 0.0
     count = 0
     for batches in outputs:
@@ -48,7 +59,17 @@ def average_activation(inputs, outputs, metadata):
     return 0.0 if count == 0 else total / count
 
 
+def standard_deviation(inputs, outputs, metadata):
+    vals = []
+    for batches in outputs:
+        for batch in batches:
+            s = numpy.std(batch)
+            vals.append(s)
+    return (0.0 if len(vals) == 0 else (sum(vals) / float(len(vals))))
+
+
 def create_server(frontend_host, frontend_port):
     server = Evaluator(frontend_host, frontend_port)
-    server.register_metric("Average activation", average_activation)
+    server.register_metric("Average absolute value", average_absolute_value)
+    server.register_metric("Standard deviation", standard_deviation)
     return server

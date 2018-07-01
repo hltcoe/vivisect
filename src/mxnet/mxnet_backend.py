@@ -38,12 +38,17 @@ def probe(model, host, port, select=lambda x : True, perform=lambda m, i, iv, ov
         model.apply(register)
     elif isinstance(model, mxnet.module.BaseModule):
         def callback(self, *args, **argdict):
+            
+
             retval = self.forward_(*args, **argdict)
-            metadata = {k : v for k, v in getattr(model, "_vivisect", {}).items()}
+            metadata = {k : v for k, v in getattr(model, "_vivisect").items()}
             metadata["op_name"] = self._symbol.name
-            r = Request("http://{}:{}".format(host, port), method="POST", data=json.dumps({"outputs" : [o.asnumpy().tolist() for o in retval],
-                                                                                           "inputs" : [],
-                                                                                           "metadata" : metadata,
+            r = Request("http://{}:{}".format(host, port),
+                        method="POST",
+                        headers={"Content-Type" : "application/json"},                        
+                        data=json.dumps({"outputs" : [o.asnumpy().tolist() for o in retval],
+                                         "inputs" : [],
+                                         "metadata" : metadata,
             }).encode())
             urlopen(r)
 
