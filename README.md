@@ -32,7 +32,7 @@ Libraries built on these frameworks should be able to use *vivisect* without mod
 Install the library and the supported frameworks:
 
 ```python
-pip install . --user --pre
+pip install . --user --pre --process-dependency-links
 ```
 
 Vivisect is composed of three servers that need to be running simultaneously, so e.g. run these commands in separate terminals on a single machine.  First, the `aggregator`, with whom client code directly communicates:

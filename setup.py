@@ -24,5 +24,12 @@ setup(name="Vivisect",
                    "vivisect.pytorch" : "src/pytorch",
                    "vivisect.tensorflow" : "src/tensorflow",
       },
-      install_requires=["flask>=1.0.0", "plotly", "mxnet>1.2.0", "torch", "tensorflow", "sockeye", "OpenNMT-py>=0.2"]
+      dependency_links=["git+https://github.com/OpenNMT/OpenNMT-py@master#egg=OpenNMT-py-0.2"],
+      install_requires=["flask>=1.0.0", 
+                        "plotly>=2.7.0", 
+                        "mxnet-mkl>1.2.0", 
+                        "torch>=0.4.0", 
+                        "tensorflow>=1.8.0", 
+                        "sockeye>=1.18.28", 
+                        "OpenNMT-py>=0.2"]
      )
