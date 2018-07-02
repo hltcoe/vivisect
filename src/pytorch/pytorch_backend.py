@@ -25,17 +25,22 @@ def probe(model, host, port, select=lambda x : True, perform=lambda m, i, iv, ov
         iteration = model._vivisect["iteration"]
         if perform(model, module, ivars, ovars):
             metadata = {k : v for k, v in getattr(model, "_vivisect", {}).items()}
+            for k, v in module._vivisect.items():
+                metadata[k] = v
+            #metadata["input_names"] = [ivar for ivar in ivars],
             metadata["op_name"] = module._vivisect["name"]
+            params = {k : v.data.tolist() for k, v in module.named_parameters()}
             r = Request("http://{}:{}".format(host, port),
                         method="POST",
                         headers={"Content-Type" : "application/json"},
-                        data=json.dumps({"outputs" : [(v.data.tolist() if hasattr(v, "data") else []) for v in flatten(ovars)],
-                                         "inputs" : [(ivar.data.tolist() if hasattr(ivar, "data") else []) for ivar in ivars],
+                        data=json.dumps({"inputs" : [(ivar.data.tolist() if hasattr(ivar, "data") else []) for ivar in ivars],
+                                         "outputs" : [(v.data.tolist() if hasattr(v, "data") else []) for v in flatten(ovars)],                                         
+                                         "parameters" : params,
                                          "metadata" : metadata,
                         }).encode())
             urlopen(r)
             
-    for name, submodule in model.named_children():
+    for name, submodule in model.named_modules():
         submodule._vivisect = getattr(submodule, "_vivisect", {})
         submodule._vivisect["name"] = name
         if select(submodule):

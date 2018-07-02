@@ -335,7 +335,7 @@ if __name__ == "__main__":
             for line in ifd:
                 target.append(line)
         
-    pairs = list(zip(source, target))
+    pairs = list(zip(source, target))[0:50]
     random.shuffle(pairs)
     os.mkdir(os.path.join(temp, "data"))
     

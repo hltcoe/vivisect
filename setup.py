@@ -28,8 +28,10 @@ setup(name="Vivisect",
       install_requires=["flask>=1.0.0", 
                         "plotly>=2.7.0", 
                         "mxnet-mkl>1.2.0", 
-                        "torch>=0.4.0", 
+                        "torch==0.4.0", 
                         "tensorflow>=1.8.0", 
-                        "sockeye>=1.18.28", 
-                        "OpenNMT-py>=0.2"]
+                        "sockeye>=1.18.28",
+                        "future==0.16.0",
+                        "torchtext==0.2.3",
+                        "OpenNMT-py==0.2"]    
      )

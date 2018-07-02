@@ -38,19 +38,19 @@ pip install . --user --pre --process-dependency-links
 Vivisect is composed of three servers that need to be running simultaneously, so e.g. run these commands in separate terminals on a single machine.  First, the `aggregator`, with whom client code directly communicates:
 
 ```bash
-python scripts/run_aggregator.py --host localhost --port 8082
+FLASK_APP="src/servers/aggregator.py:create_server('localhost', 8081)" flask run --port 8082 --reload
 ```
 
 This server receives and accumulates layers and metadata, and when it determines a full time-step (usually, one training iteration) has completed for a model, combines and sends them to the `evaluator`:
 
 ```bash
-python scripts/run_evaluator.py --host localhost --port 8081
+FLASK_APP="src/servers/evaluator.py:create_server('localhost', 8080)" flask run --port 8081 --reload
 ```
 
 This server receives an epoch's-worth of layers at a time, i.e. enough to calculate some value for model `M`'s operation `O` at iteration `I`.  It calculates a scalar value, and sends it along to the `frontend`:
 
 ```bash
-python scripts/run_frontend.py --host localhost --port 8080 [--database FILE]
+FLASK_APP="src/servers/frontend.py:create_server()" flask run --port 8080 --reload
 ```
 
 This is the server that collects and presents results, i.e. you can browse to `localhost:8080`.  Right now, the top-level page lists the models, the second level lists the metrics for a given model, and the third level plots the metric for each operation as a function of time.
@@ -97,3 +97,54 @@ Regardless of the underlying framework being used, models and operations always 
 so `what` and `when` should generally make decisions based on values from these dictionaries.  The `what` decisions are made once when `probe` is called on the model, while `when` is called many times as the model is run, so the latter in particular should be as fast as possible.
 
 In addition to being used in these functions, the `_vivisect` dictionaries are serialized and sent along with the tensors to the server.  Managing these dictionaries and how they change as the model runs is done in user space.  At a minimum, the model should have `model._vivisect["mode"]` set to an appropriate value like "train", "dev", "test", and `model._vivisect["iteration"]` to the current training iteration (if you want to track how metrics co-evolve).  See e.g. the `train` method in `vivisect.pytorch` for an example.
+
+## Components
+
+When a monitored (according to the `which` callback passed to `probe`) operation's forward pass is invoked, and the boolean `when` callback returns `True`, the client sends a JSON object to the Vivisect servers with the format:
+
+```
+{"metadata" : DICTIONARY,
+ "inputs" : TENSOR_LIST,
+ "outputs" : TENSOR_LIST,
+ "parameters" : TENSOR_LIST
+ }
+```
+
+Each tensor is simply a nested list of numbers, with the first dimension always corresponds to batch.  For example, 
+
+```
+[
+ [[1, 2, 3], 
+  [2, 3, 4]
+ ],
+ [[[1, 2], 
+   [2, 3]],
+  [[3, 4], 
+   [4, 5]],
+ ]
+]
+``` 
+
+corresponds to 1D and 2D tensors produced from a batch of size 2.  Various information is stuffed into the `metadata` field: anything you place in the `_vivisect` attributes of a model or its operators.  Currently Vivisect automatically populates `op_name` and expects a numeric field `iteration` and string `model_name`, and in the future may standardize additional fields.  These JSON packets, containing tensor lists and metadata, are what client code emits.
+
+### Aggregator
+
+The *aggregator*'s sole purpose is to receive `batch_packets`, collect them until there is a coherent set, combine them intelligently, and send them along as `eval_packets`.
+
+The user controls what "coherent set" means by modifying the value of `model._vivisect["batch_key"]` (call this the `batch_key`).  Packets are grouped by all other key-value pairs in the `_vivisect` attribute (call this the `op_key`).  Every time a new `batch_key` is seen for a given `op_key`, the `op_key`'s current set of packets is combined, sent on, and cleared.  A common approach, for example, is to set `model._vivisect["batch_key"] = {"iteration" : 1}`, and every training epoch do `model._vivisect["batch_key"]["iteration"] += 1`, while `model._vivisect`'s `model_name` and `op_name` constitute the `op_key`, thus grouping batch-packets by iteration.
+
+The other behavior to consider is how `batch_packets` are combined into `eval_packets`.  They have the identical structure, where the `eval_packet` metadata field has the key-value pairs that have the same value across all of the `batch_packets`, and the tensors no longer have the initial batch dimension, as they have been concatenated.
+
+A final hiccup is, for the final batch, the *aggregator* will never see the "next" `batch_key`, so the client code should call `flush(host, port, model)` at the very end to instruct the server to consider the final batch complete.
+
+### Evaluator
+
+The *evaluator* receives `eval_packet`s, computes arbitrary metrics based on them, and sends the metric values along.  Each metric function has the same simple signature:
+
+```
+def my_metric(eval_packet) -> float
+```
+
+### Frontend
+
+The *frontend* receives `metric_packet`s, which are very lightweight since they just contain metadata and the metric value.  Typically, this server is only serving `GET` requests, as web clients browse plots of the metric values.  It also accepts `POST` commands that remove collected metric values.
