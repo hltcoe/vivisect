@@ -2,76 +2,151 @@ from urllib.request import urlopen, Request
 import json
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence, PackedSequence
 import torch.utils.data
 import torch
 import numpy
 import logging
 import uuid
 import functools
-torch.set_default_tensor_type("torch.DoubleTensor")
+import re
+import sys
+import torch
+
+model_types = nn.Module
 
 
-def flatten(tensors):
-    if isinstance(tensors, (tuple, list)):
-        return sum(map(flatten, tensors), [])
-    else:
-        return [tensors]
-
-
-def probe(model, host, port, select=lambda x : True, perform=lambda m, i, iv, ov : True):
-    assert(isinstance(model, nn.Module))
-    def callback(module, ivars, ovars):
-        iteration = model._vivisect["iteration"]
-        if perform(model, module, ivars, ovars):
-            metadata = {k : v for k, v in getattr(model, "_vivisect", {}).items()}
-            for k, v in module._vivisect.items():
-                metadata[k] = v
-            #metadata["input_names"] = [ivar for ivar in ivars],
-            metadata["op_name"] = module._vivisect["name"]
-            params = {k : v.data.tolist() for k, v in module.named_parameters()}
-            r = Request("http://{}:{}".format(host, port),
-                        method="POST",
-                        headers={"Content-Type" : "application/json"},
-                        data=json.dumps({"inputs" : [(ivar.data.tolist() if hasattr(ivar, "data") else []) for ivar in ivars],
-                                         "outputs" : [(v.data.tolist() if hasattr(v, "data") else []) for v in flatten(ovars)],                                         
-                                         "parameters" : params,
-                                         "metadata" : metadata,
-                        }).encode())
-            urlopen(r)
-            
+def get_ops(model):
     for name, submodule in model.named_modules():
-        submodule._vivisect = getattr(submodule, "_vivisect", {})
-        submodule._vivisect["name"] = name
-        if select(submodule):
-            submodule.register_forward_hook(callback) 
+        yield((name, submodule))
 
 
-class mlp(nn.Module):
-    def __init__(self, nfeats, nlabels, hidden_size):
-        super(mlp, self).__init__()
-        self.dense1 = nn.Linear(in_features=nfeats, out_features=hidden_size)
-        self.dense2 = nn.Linear(in_features=hidden_size, out_features=nlabels)
-        self.softmax = nn.LogSoftmax(dim=1)
-    def forward(self, x):
-        x = F.relu(self.dense1(x[0]))
-        return self.softmax(F.relu(self.dense2(x)))
+def unpack_parameters(params, op):
+    return {k : v.data.tolist() for k, v in params}
+
+
+def unpack_outputs(outputs, op):
+    if isinstance(outputs, torch.Tensor):
+        return {"output" : outputs.data.tolist()}
+    #elif isinstance(xput, list):
+    #    return [x.data.tolist() for x in xput]
+    #elif isinstance(xput, tuple):
+    #    #print([x.shape for x in xput])
+    #    return [x.data.tolist() for x in xput]
+    #elif isinstance(xput, PackedSequence):
+    #    return []
+    elif isinstance(op, nn.LSTM):
+        o, (h, c) = outputs
+        #
+        return {"hidden" : h.squeeze().data.tolist(),
+                "state" : c.squeeze().data.tolist(),
+                "output" : pad_packed_sequence(o, batch_first=True, total_length=300)[0].squeeze().data.tolist()
+        }
+    elif isinstance(outputs, tuple):
+        #e, m = outputs
+        return {str(i) : v.squeeze().data.tolist() for i, v in enumerate(outputs) if hasattr(v, "data")}
+    #"0" : x.data.tolist() for x in e}
+            #
+    else:
+        raise Exception("Unknown output from {} (a {})".format(type(outputs), type(op)))
+
+
+def unpack_inputs(inputs, op):
+    return {}
+    if isinstance(inputs, torch.Tensor):
+        return {"input" : inputs.data.tolist()}
+    #elif isinstance(xput, list):
+    #    return [x.data.tolist() for x in xput]
+    #elif isinstance(xput, tuple):
+    #    #print([x.shape for x in xput])
+    #    return [x.data.tolist() for x in xput]
+    #elif isinstance(xput, PackedSequence):
+    #    return []
+    # elif isinstance(op, nn.LSTM):
+    #     o, (h, c) = outputs
+    #     #
+    #     return {"hidden" : h.squeeze().data.tolist(),
+    #             "state" : c.squeeze().data.tolist(),
+    #             "output" : pad_packed_sequence(o, batch_first=True, total_length=300)[0].squeeze().data.tolist()
+    #     }
+    elif isinstance(inputs, tuple):
+    #     #e, m = outputs
+        return {str(i) : v.squeeze().data.tolist() for i, v in enumerate(inputs) if hasattr(v, "data")}
+    # #"0" : x.data.tolist() for x in e}
+    #         #
+    else:
+        raise Exception("Unknown input to {} (a {})".format(type(inputs), type(op)))
+    
+
+# def attach(operation, callback):
+#     def _callback(op, inputs, outputs):
+#         logging.debug("Operation: {}".format(op._vivisect["op_name"]))
+#         # ii = [numpy.asarray(listify(x, op)) for x in inputs]
+#         # logging.debug("Input shapes: %s", [i.shape for i in ii])
+#         # logging.debug("Inputs: %s", inputs)
+#         # oo = [numpy.asarray(listify(x, op)) for x in (outputs if isinstance(outputs, tuple) else [outputs])]
+#         # logging.debug("Output shapes: %s", [o.shape for o in oo])
+#         # logging.debug("Outputs: %s", outputs)
+#         # if getattr(operation, "_dims", None) == None:
+#         #     operation._dims = [o.shape[1:] for o in oo]
+#         # else:
+#         #    try:
+#         #        assert(operation._dims == [o.shape[1:] for o in oo])
+#         #    except Exception as e:
+#         #        print(operation._dims)
+#         #        print([o.shape[1:] for o in listify(outputs)])
+#         #        print(operation)
+#         #        raise e
+
+#         #        
+#         #input_lists = [i.data.tolist() for i in listify(inputs)]
+#         #output_lists = [o.data.tolist() for o in listify(outputs)]
+#         #o = [listify(x).data.tolist() for x in (outputs if isinstance(outputs, tuple) else [outputs])]
+#         #print(operation, [i.shape for i in o])
+#         return callback(operation,                        
+#                         #list(filter(lambda x : x != None, [listify(x) for x in inputs])),
+#                         #list(filter(lambda x : x != None, [listify(x) for x in (outputs if isinstance(outputs, tuple) else [outputs])])),
+#                         #listify(inputs, op),
+#                         unpack_inputs(inputs, op),
+#                         unpack_outputs(outputs, op),
+#                         #listify(outputs, op),
+#                         #[listify(x) for x in inputs],
+#                         #[listify(x) for x in (outputs if isinstance(outputs, tuple) else [outputs])],
+#                         )
+
+#     operation.register_forward_hook(_callback)
+#     # operation.register_backward_hook(callback)
 
     
-class rnn(nn.Module):
-    def __init__(self, nfeats, nlabels, hidden_size):
-        super(rnn, self).__init__()
-        self.lstm = nn.LSTM(input_size=nfeats, hidden_size=hidden_size)
-        self.dense = nn.Linear(in_features=hidden_size, out_features=nlabels)
-        self.softmax = nn.LogSoftmax(dim=1)
-    def forward(self, x):
-        x, l = x
-        seq_lengths, perm_idx = l.sort(0, descending=True)
-        xp = pack_padded_sequence(x[perm_idx], seq_lengths.tolist(), batch_first=True)
-        packed_out, (ht, ct) = self.lstm(xp)
-        out, _ = pad_packed_sequence(packed_out)
-        return self.softmax(self.dense(ht[-1]))
+def forward_attach(operation, callback):
+    def _callback(op, inputs, outputs):
+        logging.debug("Operation: {}".format(op._vivisect["op_name"]))
+        return callback(op,                        
+                        unpack_inputs(inputs, op),
+                        unpack_outputs(outputs, op),
+                        )
+    operation.register_forward_hook(_callback)
 
+    
+def backward_attach(operation, callback):
+    def _callback(op, grad_inputs, grad_outputs):
+        logging.debug("Operation: {}".format(op._vivisect["op_name"]))
+        return callback(op,                        
+                        unpack_inputs(grad_inputs, op),
+                        unpack_outputs(grad_outputs, op),
+                        )
+    operation.register_backward_hook(_callback)
+
+    
+def parameter_attach(model, callback):
+    def _callback(op, inputs, outputs):
+        logging.debug("Operation: {}".format(op._vivisect["op_name"]))
+        params = op.named_parameters()
+        return callback(op,                        
+                        unpack_parameters(params, op),
+                        )
+    model.register_forward_hook(_callback)
+    
 
 def train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, epochs, batch_size=32):
     def make_loader(vals):
@@ -84,8 +159,9 @@ def train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, epochs, batch_s
     train_loader, dev_loader, test_loader = map(make_loader, [(x_train, y_train), (x_dev, y_dev), (x_test, y_test)])
     criterion = torch.nn.NLLLoss()
     optimizer = torch.optim.SGD(model.parameters(), lr=.1)
+    model._vivisect["epoch"] = 0
     for t in range(epochs):
-        model._vivisect["iteration"] += 1
+        model._vivisect["epoch"] += 1
         model._vivisect["mode"] = "train"
         train_loss = 0.0
         for i, batch in enumerate(train_loader, 1):

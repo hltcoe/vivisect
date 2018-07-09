@@ -18,14 +18,14 @@ import os
 import glob
 import sys
 import torch
-from onmt.utils.misc import get_logger
+#from onmt.utils.misc import get_logger
 import onmt.inputters as inputters
 import onmt.opts as opts
 import gzip
 import tempfile
 import shutil
 import logging
-from vivisect.pytorch import probe
+from vivisect import probe
 from vivisect.servers import clear, flush
 
 
@@ -174,9 +174,8 @@ def build_save_vocab(train_dataset, fields, opt, logger=None):
                                    opt.src_words_min_frequency,
                                    opt.tgt_vocab,
                                    opt.tgt_vocab_size,
-                                   opt.tgt_words_min_frequency,
-                                   logger)
-
+                                   opt.tgt_words_min_frequency)
+    
     # Can't save fields, so remove/reconstruct at training time.
     vocab_file = opt.save_data + '.vocab.pt'
     torch.save(inputters.save_fields_to_vocab(fields), vocab_file)
@@ -236,7 +235,8 @@ def training_opt_postprocessing(opt):
 
 def training_main(opt):
     opt = training_opt_postprocessing(opt)
-
+    #opt.start_epoch = 1
+    
     # Load checkpoint if we resume from a previous training.
     if opt.train_from:
         print('Loading checkpoint from %s' % opt.train_from)
@@ -265,8 +265,10 @@ def training_main(opt):
     _tally_parameters(model)
     _check_save_model_path(opt)
 
-    model._vivisect = {"iteration" : 0, "model_name" : "OpenNMT Model", "framework" : "pytorch", "mode" : "train"}
-    probe(model, "localhost", 8082)
+    model._vivisect = {"epoch" : 0, "model_name" : "OpenNMT Model", "framework" : "pytorch", "mode" : "train"}
+    probe(model, "localhost", 8082,
+          when=lambda model, op, inp, outp : model._vivisect["mode"] == "train",
+          which=lambda model, op : "rnn" in op._vivisect["op_name"])
     
     # Build optimizer.
     optim = build_optim(model, opt, checkpoint)
@@ -274,11 +276,14 @@ def training_main(opt):
     # Build model saver
     model_saver = build_model_saver(model_opt, opt, model, fields, optim)
 
+
+        
     trainer = build_trainer(
         opt, model, fields, optim, data_type, model_saver=model_saver)
 
     def train_iter_fct():
-        model._vivisect["iteration"] += 1
+        model._vivisect["epoch"] += 1
+        logging.info("Epoch %d", model._vivisect["epoch"])
         model._vivisect["mode"] = "train"
         return build_dataset_iter(lazily_load_dataset("train", opt), fields, opt)
 
@@ -287,14 +292,16 @@ def training_main(opt):
         return build_dataset_iter(lazily_load_dataset("valid", opt), fields, opt)
 
     # Do training.
-    trainer.train(train_iter_fct, valid_iter_fct, opt.start_epoch, opt.epochs)
-
+    trainer.train(train_iter_fct, valid_iter_fct, opt.train_steps, 1)
+    
     if opt.tensorboard:
         trainer.report_manager.tensorboard_writer.close()
 
         
 def preprocess_main(opt):
-    logger = get_logger(opt.log_file)
+    logger = logging
+    #logging.getLogger("ROOT")
+    #get_logger(opt.log_file)
     src_nfeats = inputters.get_num_features(
         opt.data_type, opt.train_src, 'src')
     tgt_nfeats = inputters.get_num_features(
@@ -318,10 +325,20 @@ def preprocess_main(opt):
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
+    parser.add_argument("--host", dest="host", default="0.0.0.0", help="Host name")
+    parser.add_argument("--port", dest="port", default=8082, type=int, help="Port number")
+    parser.add_argument("--frontend_host", dest="frontend_host", default="0.0.0.0", help="Host name")
+    parser.add_argument("--frontend_port", dest="frontend_port", default=8080, type=int, help="Port number")
     parser.add_argument("--source", dest="source")
     parser.add_argument("--target", dest="target")
     parser.add_argument("--epochs", dest="epochs", default=10, type=int)
     args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO)
+    
+    clear(args.host, args.port)
+    clear(args.frontend_host, args.frontend_port)
+
     
     temp = tempfile.mkdtemp()
     
@@ -335,7 +352,7 @@ if __name__ == "__main__":
             for line in ifd:
                 target.append(line)
         
-    pairs = list(zip(source, target))[0:50]
+    pairs = list(zip(source, target))[0:1000]
     random.shuffle(pairs)
     os.mkdir(os.path.join(temp, "data"))
     
@@ -369,7 +386,7 @@ if __name__ == "__main__":
     opts.model_opts(train_parser)
     opts.train_opts(train_parser)
     train_args = train_parser.parse_args(["-data", os.path.join(temp, "data/out"),
-                                          "-epochs", str(args.epochs),
+                                          "-train_steps", str(args.epochs - 1),
                                           "-save_model", os.path.join(temp, "model")])
 
     clear("localhost", 8082)
