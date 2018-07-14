@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 import argparse
 from sockeye.model import *
 from sockeye.train import *

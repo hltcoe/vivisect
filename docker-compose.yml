@@ -4,6 +4,16 @@ services:
   frontend:
     build: .
     image: hltcoe/vivisect
-    ports: [8080]
-    command: frontend
-    #expose: [8080]
+    ports: ["8080"]
+    command: python36 -m vivisect.servers frontend --host frontend --port 8080
+
+  evaluator:
+    build: .
+    image: hltcoe/vivisect
+    command: python36 -m vivisect.servers evaluator --host evaluator --port 8080 --frontend_host frontend --frontend_port 8080
+
+  aggregator:
+    build: .
+    image: hltcoe/vivisect
+    ports: ["8080"]
+    command: python36 -m vivisect.servers aggregator --host 0.0.0.0 --port 8080 --evaluator_host evaluator --evaluator_port 8080

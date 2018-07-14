@@ -13,7 +13,8 @@ import re
 import sys
 import torch
 
-model_types = nn.Module
+
+model_types = (nn.Module)
 
 
 def get_ops(model):
@@ -28,25 +29,14 @@ def unpack_parameters(params, op):
 def unpack_outputs(outputs, op):
     if isinstance(outputs, torch.Tensor):
         return {"output" : outputs.data.tolist()}
-    #elif isinstance(xput, list):
-    #    return [x.data.tolist() for x in xput]
-    #elif isinstance(xput, tuple):
-    #    #print([x.shape for x in xput])
-    #    return [x.data.tolist() for x in xput]
-    #elif isinstance(xput, PackedSequence):
-    #    return []
     elif isinstance(op, nn.LSTM):
         o, (h, c) = outputs
-        #
         return {"hidden" : h.squeeze().data.tolist(),
                 "state" : c.squeeze().data.tolist(),
                 "output" : pad_packed_sequence(o, batch_first=True, total_length=300)[0].squeeze().data.tolist()
         }
     elif isinstance(outputs, tuple):
-        #e, m = outputs
         return {str(i) : v.squeeze().data.tolist() for i, v in enumerate(outputs) if hasattr(v, "data")}
-    #"0" : x.data.tolist() for x in e}
-            #
     else:
         raise Exception("Unknown output from {} (a {})".format(type(outputs), type(op)))
 
@@ -55,67 +45,18 @@ def unpack_inputs(inputs, op):
     return {}
     if isinstance(inputs, torch.Tensor):
         return {"input" : inputs.data.tolist()}
-    #elif isinstance(xput, list):
-    #    return [x.data.tolist() for x in xput]
-    #elif isinstance(xput, tuple):
-    #    #print([x.shape for x in xput])
-    #    return [x.data.tolist() for x in xput]
-    #elif isinstance(xput, PackedSequence):
-    #    return []
-    # elif isinstance(op, nn.LSTM):
-    #     o, (h, c) = outputs
-    #     #
-    #     return {"hidden" : h.squeeze().data.tolist(),
-    #             "state" : c.squeeze().data.tolist(),
-    #             "output" : pad_packed_sequence(o, batch_first=True, total_length=300)[0].squeeze().data.tolist()
-    #     }
     elif isinstance(inputs, tuple):
-    #     #e, m = outputs
         return {str(i) : v.squeeze().data.tolist() for i, v in enumerate(inputs) if hasattr(v, "data")}
-    # #"0" : x.data.tolist() for x in e}
-    #         #
     else:
         raise Exception("Unknown input to {} (a {})".format(type(inputs), type(op)))
     
 
-# def attach(operation, callback):
-#     def _callback(op, inputs, outputs):
-#         logging.debug("Operation: {}".format(op._vivisect["op_name"]))
-#         # ii = [numpy.asarray(listify(x, op)) for x in inputs]
-#         # logging.debug("Input shapes: %s", [i.shape for i in ii])
-#         # logging.debug("Inputs: %s", inputs)
-#         # oo = [numpy.asarray(listify(x, op)) for x in (outputs if isinstance(outputs, tuple) else [outputs])]
-#         # logging.debug("Output shapes: %s", [o.shape for o in oo])
-#         # logging.debug("Outputs: %s", outputs)
-#         # if getattr(operation, "_dims", None) == None:
-#         #     operation._dims = [o.shape[1:] for o in oo]
-#         # else:
-#         #    try:
-#         #        assert(operation._dims == [o.shape[1:] for o in oo])
-#         #    except Exception as e:
-#         #        print(operation._dims)
-#         #        print([o.shape[1:] for o in listify(outputs)])
-#         #        print(operation)
-#         #        raise e
+def get_operation_names(model):
+    return [name for name, _ in model.named_modules() if name != ""]
 
-#         #        
-#         #input_lists = [i.data.tolist() for i in listify(inputs)]
-#         #output_lists = [o.data.tolist() for o in listify(outputs)]
-#         #o = [listify(x).data.tolist() for x in (outputs if isinstance(outputs, tuple) else [outputs])]
-#         #print(operation, [i.shape for i in o])
-#         return callback(operation,                        
-#                         #list(filter(lambda x : x != None, [listify(x) for x in inputs])),
-#                         #list(filter(lambda x : x != None, [listify(x) for x in (outputs if isinstance(outputs, tuple) else [outputs])])),
-#                         #listify(inputs, op),
-#                         unpack_inputs(inputs, op),
-#                         unpack_outputs(outputs, op),
-#                         #listify(outputs, op),
-#                         #[listify(x) for x in inputs],
-#                         #[listify(x) for x in (outputs if isinstance(outputs, tuple) else [outputs])],
-#                         )
 
-#     operation.register_forward_hook(_callback)
-#     # operation.register_backward_hook(callback)
+def get_parameter_names(model):
+    return [name for name, _ in model.named_parameters()]    
 
     
 def forward_attach(operation, callback):
@@ -154,24 +95,31 @@ def train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, epochs, batch_s
         x = [torch.autograd.Variable(torch.from_numpy(numpy.asfarray(v))) for v in (x if isinstance(x, tuple) else [x])]
         y = [torch.autograd.Variable(torch.from_numpy(numpy.asarray(v))) for v in (y if isinstance(y, tuple) else [y])]
         data = torch.utils.data.TensorDataset(*x, *y)
-        return torch.utils.data.DataLoader(data, batch_size=batch_size)
+        return torch.utils.data.DataLoader(data, batch_size=batch_size, shuffle=False)
     x_size = len(x_train) if isinstance(x_train, (list, tuple)) else 1
     train_loader, dev_loader, test_loader = map(make_loader, [(x_train, y_train), (x_dev, y_dev), (x_test, y_test)])
-    criterion = torch.nn.NLLLoss()
+    criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(model.parameters(), lr=.1)
+    sm = nn.LogSoftmax(dim=1)
     model._vivisect["epoch"] = 0
     for t in range(epochs):
         model._vivisect["epoch"] += 1
         model._vivisect["mode"] = "train"
         train_loss = 0.0
+        preds = []
+        targs = []
         for i, batch in enumerate(train_loader, 1):
             y_pred = model(batch[0:x_size])
+            preds += y_pred.argmax(1).data.tolist()
+            #targs += 
             loss = criterion(y_pred, batch[-1])
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             train_loss += loss.data.tolist()
-
+        #cor = [x for x in zip(preds, y_train.tolist()) if x[0] == x[1]]
+        #logging.info(len(cor) / len(preds))
+        
         model._vivisect["mode"] = "dev"
         dev_loss = 0.0
         for i, batch in enumerate(dev_loader, 1):
@@ -186,3 +134,4 @@ def train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, epochs, batch_s
             loss = criterion(y_pred, batch[-1])
             test_loss += loss.data.tolist()
         logging.info("Iteration {} train/dev/test loss: {:.4f}/{:.4f}/{:.4f}".format(t + 1, train_loss, dev_loss, test_loss))
+

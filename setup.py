@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+import os.path
+from glob import glob
 from setuptools import setup
 
 frameworks = ["pytorch", "mxnet", "tensorflow"]
@@ -36,5 +38,8 @@ setup(name="Vivisect",
                         "sockeye>=1.18.28",
                         "future==0.16.0",
                         "torchtext==0.2.4",
-                        "OpenNMT-py==0.2"]    
+                        "scikit-learn==0.19.1",
+                        "scipy==1.1.0",
+                        "OpenNMT-py==0.2"],
+      scripts=glob(os.path.join("scripts", "*")),
      )

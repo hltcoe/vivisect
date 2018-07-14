@@ -52,7 +52,7 @@ class Frontend(Flask):
             plots = []
             for op_name, group_name, slot_name in line_tuples:
                 vals = sorted([x for x in self._cur.execute('SELECT epoch,metric_value from metrics where model_name=? and metric_name=? and op_name=? and slot_name=? and group_name=?', (model_name, metric_name, op_name, slot_name, group_name))])
-                #total = sum([x[1] for x in vals])
+                total = sum([x[1] for x in vals])
                 plots.append(Scatter(x=[x[0] for x in vals], y=[x[1] for x in vals], mode="lines", name="{}_{}_{}".format(op_name, group_name, slot_name)))
             plots_html = plot(plots, output_type="div")
             html = "<html><body><h2><a href='/'>Vivisect server</a>|<a href='/{0}'>{0}</a>|{1}</h2>{2}</body></html>".format(model_name,

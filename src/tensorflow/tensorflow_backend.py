@@ -1,4 +1,6 @@
 import argparse
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 import tensorflow as tf
 from tensorflow import Graph
 from tensorflow.contrib.timeseries import ARModel
@@ -12,6 +14,55 @@ from urllib.request import urlopen, Request
 import numpy
 import logging
 
+
+model_types = (tf.Session)
+
+
+def get_ops(model):
+    return [(o.name, o) for o in model.graph.get_operations()]
+
+
+def get_operation_names(model):
+    return [o.name for o in model.graph.get_operations()]
+
+
+def get_parameter_names(model):
+    return list(model.collect_params().keys())
+    return [name for name, _ in model.named_parameters()]    
+
+    
+def forward_attach(operation, callback):
+    return None
+    def _callback(op, inputs, outputs):
+        logging.debug("Operation: {}".format(op._vivisect["op_name"]))
+        return callback(op,                        
+                        unpack_inputs(inputs, op),
+                        unpack_outputs(outputs, op),
+                        )
+    operation.register_forward_hook(_callback)
+
+    
+def backward_attach(operation, callback):
+    return None
+    def _callback(op, grad_inputs, grad_outputs):
+        logging.debug("Operation: {}".format(op._vivisect["op_name"]))
+        return callback(op,                        
+                        unpack_inputs(grad_inputs, op),
+                        unpack_outputs(grad_outputs, op),
+                        )
+    operation.register_backward_hook(_callback)
+
+    
+def parameter_attach(model, callback):
+    return None
+    def _callback(op, inputs, outputs):
+        logging.debug("Operation: {}".format(op._vivisect["op_name"]))
+        params = op.named_parameters()
+        return callback(op,                        
+                        unpack_parameters(params, op),
+                        )
+    model.register_forward_hook(_callback)
+        
 
 def probe(model, host, port, select=lambda x : True, perform=lambda m, i, iv, ov : True):
     assert(isinstance(model, tf.Session))
@@ -106,7 +157,7 @@ def train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, epochs, batch_s
     train_op = optimizer.minimize(loss)
     model.run(tf.global_variables_initializer())
     for epoch in range(epochs):
-        model._vivisect["iteration"] += 1
+        model._vivisect["epoch"] += 1
         model._vivisect["mode"] = "train"
         _, train_loss = model.run([train_op, loss], feed_dict={model.input : x_train,
                                                                model.y : y_train})
@@ -116,4 +167,4 @@ def train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, epochs, batch_s
         model._vivisect["mode"] = "test"
         test_loss = model.run(loss, feed_dict={model.input : x_test,
                                                model.y : y_test})
-        logging.info("Iteration {} train/dev/test loss: {:.4f}/{:.4f}/{:.4f}".format(epoch + 1, train_loss, dev_loss, test_loss))        
+        logging.info("Epoch {} train/dev/test loss: {:.4f}/{:.4f}/{:.4f}".format(epoch + 1, train_loss, dev_loss, test_loss))        

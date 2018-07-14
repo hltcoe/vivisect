@@ -9,7 +9,6 @@ from mxnet import io
 from mxnet.gluon import Block, HybridBlock, SymbolBlock, Trainer
 from mxnet.gluon.nn import Sequential, Dense
 from mxnet.gluon.rnn import LSTM
-from sockeye.training import TrainingModel
 import numpy
 from urllib.request import urlopen, Request
 import json
@@ -17,101 +16,85 @@ import logging
 from types import MethodType
 
 
-def probe(model, host, port, select=lambda x : True, perform=lambda m, i, iv, ov : True):
-    assert(isinstance(model, (Block, mxnet.module.BaseModule)))
-    if isinstance(model, Block):
-        def callback(op, ivars, ovars):
-            if perform(model, op, ivars, ovars):
-                metadata = {k : v for k, v in getattr(model, "_vivisect", {}).items()}
-                metadata["op_name"] = op.name
-                r = Request("http://{}:{}".format(host, port),
-                            method="POST",
-                            headers={"Content-Type" : "application/json"},
-                            data=json.dumps({"outputs" : [ovar.asnumpy().tolist() for ovar in (ovars if isinstance(ovars, list) else [ovars])],
-                                             "inputs" : [ivar.asnumpy().tolist() for ivar in ivars],
-                                             "metadata" : metadata,
-                            }).encode())
-                urlopen(r)
-        def register(m):
-            if select(m):
-                m.register_forward_hook(callback)
-        model.apply(register)
-    elif isinstance(model, mxnet.module.BaseModule):
-        def callback(self, *args, **argdict):
-            
-
-            retval = self.forward_(*args, **argdict)
-            metadata = {k : v for k, v in getattr(model, "_vivisect").items()}
-            metadata["op_name"] = self._symbol.name
-            r = Request("http://{}:{}".format(host, port),
-                        method="POST",
-                        headers={"Content-Type" : "application/json"},                        
-                        data=json.dumps({"outputs" : [o.asnumpy().tolist() for o in retval],
-                                         "inputs" : [],
-                                         "metadata" : metadata,
-            }).encode())
-            urlopen(r)
+model_types = (Block)
 
 
-            #print(retval)
-            #print(self.output_dict) #retval)
-            #return retval
+def get_ops(model):
+    return [(o.name, o) for o in _get_ops(model)]
 
-        class Monitor:
-            def install(self, exe):
-                #def callback(name, handle):
-                #    print(exe.forward())
-                    #print(name) #, exe._get_outputs())
-                    #o = exe.output_dict #get_outputs()
-                    #print(o.keys())
-                    #print(name)
-                #print(exe)
-                #exe.set_monitor_callback(lambda n, v : print(n, mxnet.nd.NDArray(mxnet.base.NDArrayHandle(v)).shape))
-                #exe.set_monitor_callback(callback)
-                exe.forward_ = exe.forward
-                exe.forward = MethodType(callback, exe)
-                #print(101)
-        model.install_monitor(Monitor())
-        # def callback(self, *args, **argdict):
-        #     retval = self.forward_(*args, **argdict)
-        #     for layers in model.get_params():
-        #         for k, v in layers.items():
-        #             print(k, v.shape)
-        #     return retval
-        #model.forward_ = model.forward
-        #model.forward = MethodType(callback, model)
-        # class Monitor:
-        #    def __init__(self, _model):
-        #        self._model = _model
-        #    def tic(self):
-        #        return []
-        #    def toc(self):
-        #        par, aux = self._model.module.get_params()
-        #        r = Request("http://{}:{}".format(host, port), method="POST", data=json.dumps({"output" : len(par),
-        #                                                                                       "inputs" : len(aux),
-        #                                                                                       "type" : "LAYER",
-        #                                                                                       "metadata" : {#"name" : str(op).replace("\n", " "),
-        #                                                                                                     "framework" : "sockeye",
-        #                                                                                       },
-        #        }).encode())
-        #        urlopen(r)
-        #    def install(self, x):
-        #        pass
-        # model._monitor = Monitor(model)
+
+def _get_ops(model):
+    return [model] + sum([_get_ops(c) for n, c in model._children.items()], [])
+
+
+def unpack_parameters(params, op):
+    return {k : v.data.tolist() for k, v in params}
+
+
+def unpack_outputs(outputs, op):
+    #if isinstance(outputs, torch.Tensor):
+    return {"output" : outputs.asnumpy().tolist()}
+    # elif isinstance(op, nn.LSTM):
+    #     o, (h, c) = outputs
+    #     return {"hidden" : h.squeeze().data.tolist(),
+    #             "state" : c.squeeze().data.tolist(),
+    #             "output" : pad_packed_sequence(o, batch_first=True, total_length=300)[0].squeeze().data.tolist()
+    #     }
+    # elif isinstance(outputs, tuple):
+    #     return {str(i) : v.squeeze().data.tolist() for i, v in enumerate(outputs) if hasattr(v, "data")}
+    # else:
+    #     raise Exception("Unknown output from {} (a {})".format(type(outputs), type(op)))
+
+
+def unpack_inputs(inputs, op):
+    return {}
+    if isinstance(inputs, torch.Tensor):
+        return {"input" : inputs.data.tolist()}
+    elif isinstance(inputs, tuple):
+        return {str(i) : v.squeeze().data.tolist() for i, v in enumerate(inputs) if hasattr(v, "data")}
+    else:
+        raise Exception("Unknown input to {} (a {})".format(type(inputs), type(op)))
+    
+
+def get_operation_names(model):
+    return [x.name for x in _get_ops(model)]
+
+
+def get_parameter_names(model):
+    return list(model.collect_params().keys())
+    return [name for name, _ in model.named_parameters()]    
 
     
-class mlp(Sequential):
-    def __init__(self, nfeats, nlabels, hidden_size):
-        super(mlp, self).__init__()
-        self.add(Dense(hidden_size))
-        self.add(Dense(nlabels))
+def forward_attach(operation, callback):
+    def _callback(op, inputs, outputs):
+        logging.debug("Operation: {}".format(op._vivisect["op_name"]))
+        return callback(op,                        
+                        unpack_inputs(inputs, op),
+                        unpack_outputs(outputs, op),
+                        )
+    operation.register_forward_hook(_callback)
 
+    
+def backward_attach(operation, callback):
+    return None
+    def _callback(op, grad_inputs, grad_outputs):
+        logging.debug("Operation: {}".format(op._vivisect["op_name"]))
+        return callback(op,                        
+                        unpack_inputs(grad_inputs, op),
+                        unpack_outputs(grad_outputs, op),
+                        )
+    operation.register_backward_hook(_callback)
 
-class rnn(Sequential):
-    def __init__(self, nfeats, nlabels, hidden_size):
-        super(rnn, self).__init__()
-        self.add(LSTM(hidden_size))
-        self.add(Dense(nlabels))
+    
+def parameter_attach(model, callback):
+    return None
+    def _callback(op, inputs, outputs):
+        logging.debug("Operation: {}".format(op._vivisect["op_name"]))
+        params = op.named_parameters()
+        return callback(op,                        
+                        unpack_parameters(params, op),
+                        )
+    model.register_forward_hook(_callback)
 
 
 def train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, epochs):
@@ -123,12 +106,12 @@ def train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, epochs):
     y_dev = nd.array(y_dev)
     x_test = nd.array(x_test)
     y_test = nd.array(y_test)
-
+    
     criterion = mxnet.gluon.loss.SoftmaxCrossEntropyLoss(sparse_label=True)
-    trainer = mxnet.gluon.Trainer(model.collect_params(), 'sgd', {'learning_rate': 0.1})
+    trainer = mxnet.gluon.Trainer(model.collect_params(), 'sgd', {'learning_rate': .1})
     
     for t in range(epochs):
-        model._vivisect["iteration"] += 1
+        model._vivisect["epoch"] += 1
         model._vivisect["mode"] = "train"
         with mxnet.autograd.record():
             y_pred = model(x_train)
@@ -136,20 +119,18 @@ def train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, epochs):
         loss.backward()
         trainer.step(y_train.shape[0])
         train_loss = mxnet.nd.sum(loss).asscalar()
-        dev_loss = train_loss
-        test_loss = dev_loss
         
-        #model._vivisect["mode"] = "dev"
-        #with mxnet.autograd.record():
-        #    y_pred = model(x_dev)
-        #    loss = criterion(y_pred, y_dev)
-        #dev_loss = mxnet.nd.sum(loss).asscalar()
+        model._vivisect["mode"] = "dev"
+        with mxnet.autograd.record():
+           y_pred = model(x_dev)
+           loss = criterion(y_pred, y_dev)
+        dev_loss = mxnet.nd.sum(loss).asscalar()
 
-        # model._vivisect["mode"] = "test"
-        # with mxnet.autograd.record():
-        #     y_pred = model(x_test)
-        #     loss = criterion(y_pred, y_test)
-        # test_loss = mxnet.nd.sum(loss).asscalar()
+        model._vivisect["mode"] = "test"
+        with mxnet.autograd.record():
+            y_pred = model(x_test)
+            loss = criterion(y_pred, y_test)
+        test_loss = mxnet.nd.sum(loss).asscalar()
         
         logging.info("Iteration {} train/dev/test loss: {:.4f}/{:.4f}/{:.4f}".format(t + 1, train_loss, dev_loss, test_loss))
     
