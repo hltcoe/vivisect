@@ -32,7 +32,7 @@ Libraries built on these frameworks should be able to use *vivisect* without mod
 Clone this repository:
 
 ```
-git clone -b dev https://github.com/hltcoe/vivisect.git
+git clone https://github.com/hltcoe/vivisect.git
 ```
 
 and follow instructions for either Docker or non-Docker:
