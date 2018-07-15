@@ -1,52 +1,24 @@
 from mxnet.gluon import Block, HybridBlock, SymbolBlock
 from mxnet.symbol import Symbol, FullyConnected, Variable
 import mxnet
-from mxnet.symbol import Symbol
+from mxnet import symbol
 from mxnet import nd
-from mxnet.module import BaseModule, BucketingModule, SequentialModule
+from mxnet import module
 from mxnet import init
 from mxnet import io
+from mxnet.gluon import Block, HybridBlock, SymbolBlock, Trainer
+from mxnet.gluon.nn import Sequential, Dense
+from mxnet.gluon.rnn import LSTM
+from mxnet.gluon.data import DataLoader, ArrayDataset
 import numpy
 from urllib.request import urlopen, Request
 import json
 import logging
 from types import MethodType
-import functools
 
 
-model_types = (BaseModule, Symbol)
-framework_name = "MXNet"
-
-
-def probe(model, host, port, which=lambda m, o : True, when=lambda m, o, a, b : True, **argdict):
-    model._vivisect = getattr(model, "_vivisect", {})
-    for k, v in argdict.items():
-        assert(isinstance(v, (int, float, str)))
-        model._vivisect[k] = v
-
-    if isinstance(model, BucketingModule):
-        def _new_switch_bucket(self, *args, **argdict):
-            retval = self._switch_bucket(*args, **argdict)
-            if not hasattr(self._curr_module, "_vivisect"):
-                self._curr_module._vivisect = {}
-                vs = self._curr_module._symbol.get_internals()
-                for i in range(len(vs)):
-                    def eval_callback(self, fnc, *args, **argdict):
-                        retval = fnc(*args, **argdict)
-                        print(100)
-                        return retval
-                    #vs[i].handle._eval = vs[i].eval
-                    vs[i].eval = MethodType(functools.partial(eval_callback, fnc=vs[i].eval), vs[i])
-                    #print(vs[i])
-            #print(s)
-            #print(self._curr_module._symbol.get_internals())
-                #self._curr_module.get_params()[0].keys())
-            #return retval
-        model._switch_bucket = model.switch_bucket
-        model.switch_bucket = MethodType(_new_switch_bucket, model)
-        pass
-    else:
-        raise Exception("No way to treat '{}' as a model".format(type(model)))
+model_types = (Block)
+framework_name = "Gluon"
 
 
 def get_ops(model):
@@ -54,15 +26,7 @@ def get_ops(model):
 
 
 def _get_ops(model):
-    if isinstance(model, Symbol):
-        return []
-    elif isinstance(model, BucketingModule):
-        pass
-    elif isinstance(model, SequentialModule):
-        pass
-    elif isinstance(model, BaseModule):
-        pass
-    return [] #model] + sum([_get_ops(c) for n, c in model._children.items()], [])
+    return [model] + sum([_get_ops(c) for n, c in model._children.items()], [])
 
 
 def unpack_parameters(params, op):
@@ -137,7 +101,9 @@ def parameter_attach(model, callback):
 
 def train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, epochs):
     model.initialize()
-
+    x_train = x_train[0] if isinstance(x_train, (list, tuple)) else x_train
+    x_dev = x_dev[0] if isinstance(x_dev, (list, tuple)) else x_dev
+    x_test = x_test[0] if isinstance(x_test, (list, tuple)) else x_test
     x_train = nd.array(x_train)
     y_train = nd.array(y_train)
     x_dev = nd.array(x_dev)
@@ -145,30 +111,38 @@ def train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, epochs):
     x_test = nd.array(x_test)
     y_test = nd.array(y_test)
     
+    train_loader = DataLoader(ArrayDataset(x_train, y_train), batch_size=32)
+    dev_loader = DataLoader(ArrayDataset(x_dev, y_dev), batch_size=32)
+    test_loader = DataLoader(ArrayDataset(x_test, y_test), batch_size=32)
+    
     criterion = mxnet.gluon.loss.SoftmaxCrossEntropyLoss(sparse_label=True)
     trainer = mxnet.gluon.Trainer(model.collect_params(), 'sgd', {'learning_rate': .1})
     
     for t in range(epochs):
         model._vivisect["epoch"] += 1
         model._vivisect["mode"] = "train"
-        with mxnet.autograd.record():
-            y_pred = model(x_train)
-            loss = criterion(y_pred, y_train)
-        loss.backward()
-        trainer.step(y_train.shape[0])
-        train_loss = mxnet.nd.sum(loss).asscalar()
+        train_loss, dev_loss, test_loss = 0.0, 0.0, 0.0
+        for x, y in train_loader:
+            with mxnet.autograd.record():            
+                y_pred = model(x)
+                loss = criterion(y_pred, y)
+            loss.backward()
+            trainer.step(y_train.shape[0])
+            train_loss += mxnet.nd.sum(loss).asscalar()
         
         model._vivisect["mode"] = "dev"
-        with mxnet.autograd.record():
-           y_pred = model(x_dev)
-           loss = criterion(y_pred, y_dev)
-        dev_loss = mxnet.nd.sum(loss).asscalar()
+        for x, y in dev_loader:
+            with mxnet.autograd.record():            
+                y_pred = model(x)
+                loss = criterion(y_pred, y)
+            dev_loss += mxnet.nd.sum(loss).asscalar()
 
         model._vivisect["mode"] = "test"
-        with mxnet.autograd.record():
-            y_pred = model(x_test)
-            loss = criterion(y_pred, y_test)
-        test_loss = mxnet.nd.sum(loss).asscalar()
+        for x, y in test_loader:
+            with mxnet.autograd.record():            
+                y_pred = model(x)
+                loss = criterion(y_pred, y)
+            test_loss += mxnet.nd.sum(loss).asscalar()
         
         logging.info("Iteration {} train/dev/test loss: {:.4f}/{:.4f}/{:.4f}".format(t + 1, train_loss, dev_loss, test_loss))
     

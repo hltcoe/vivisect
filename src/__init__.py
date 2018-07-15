@@ -4,12 +4,13 @@ from functools import partial
 import logging
 from .vivisect_types import ModelMetadata, OperationMetadata, ArrayMetadata
 from . import pytorch as ppy
-from . import tensorflow as tpy
+#from . import tensorflow as tpy
+from . import gluon as gpy
 from . import mxnet as mpy
-
 
 from uuid import uuid4
 
+fws = [ppy, gpy, mpy]
 
 # get_ops(model) -> list[ops]
 # attach(op, cb)
@@ -23,8 +24,8 @@ def clear(host, port):
     r = Request("http://{}:{}/clear".format(host, port), method="POST")
     urlopen(r)    
 
-#register_classification_task(name="mlp_train", targets=y_train, model_pattern="PyTorch MLP Model", layer_pattern=".*")    
-def register_classification_targets(host, port, name, targets, model_pattern, layer_pattern):
+    
+def register_classification_targets(host, port, name, targets, model_pattern, layer_pattern=".*"):
     j = {"values" : targets.tolist(), "name" : name, "model_pattern" : model_pattern, "layer_pattern" : layer_pattern}
     r = Request("http://{}:{}/register_classification_targets".format(host, port),
                 headers={"Content-Type" : "application/json"},
@@ -33,7 +34,7 @@ def register_classification_targets(host, port, name, targets, model_pattern, la
     urlopen(r)
 
 
-def register_clustering_targets(host, port, name, targets, model_pattern, layer_pattern):
+def register_clustering_targets(host, port, name, targets, model_pattern, layer_pattern=".*"):
     j = {"values" : targets.tolist(), "name" : name, "model_pattern" : model_pattern, "layer_pattern" : layer_pattern}
     r = Request("http://{}:{}/register_clustering_targets".format(host, port),
                 headers={"Content-Type" : "application/json"},
@@ -82,7 +83,7 @@ def _parameter_callback(operation, parameters, when, model, host, port):
 
 
 def get_model_info(model):
-    for fw in [ppy, mpy, tpy]:
+    for fw in fws:
         if isinstance(model, fw.model_types):
             ops = fw.get_operation_names(model)
             params = fw.get_parameter_names(model)
@@ -103,9 +104,15 @@ def probe(model, host, port, which=lambda m, o : True, when=lambda m, o, a, b : 
         
     model._vivisect["model_name"] = model._vivisect.get("model_name", str(uuid4()))
     model._vivisect["op_name"] = model._vivisect["model_name"]
+    model._vivisect["epoch"] = 0
+    model._vivisect["mode"] = "none"
     
-    for fw in [ppy, mpy, tpy]:
+    for fw in fws:
         if isinstance(model, fw.model_types):
+            model._vivisect["framework"] = fw.framework_name
+            if hasattr(fw, "probe"):
+                fw.probe(model, host, port, which, when, **argdict)
+                return True
             fw.parameter_attach(model, parameter_callback)
             for name, operation in fw.get_ops(model):
                 operation._vivisect = getattr(operation, "_vivisect", {})
@@ -122,7 +129,7 @@ def probe(model, host, port, which=lambda m, o : True, when=lambda m, o, a, b : 
 
 def train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, epochs):
     model._vivisect["epoch"] = 0
-    for fw in [ppy, mpy, tpy]:
+    for fw in fws:
         if isinstance(model, fw.model_types):
             fw.train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, epochs)
             return True

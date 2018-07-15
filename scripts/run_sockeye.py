@@ -5,8 +5,7 @@ from sockeye.model import *
 from sockeye.train import *
 from sockeye.training import *
 from sockeye.arguments import *
-from vivisect.mxnet import probe
-from vivisect.servers import flush, clear
+from vivisect import probe, flush, clear
 import warnings
 warnings.simplefilter(action='ignore')
 import tempfile
@@ -31,12 +30,16 @@ from types import MethodType
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("--host", dest="host", default="0.0.0.0", help="Host name")
+    parser.add_argument("--port", dest="port", default=8082, type=int, help="Port number")
     parser.add_argument("--source", dest="source")
     parser.add_argument("--target", dest="target")
+    parser.add_argument("--clear", dest="clear", action="store_true", default=False, help="Clear the database first")
     parser.add_argument("--epochs", dest="epochs", default=10, type=int)
     args, rest = parser.parse_known_args()    
 
-    clear("localhost", 8082)
+    if args.clear:
+        clear(args.host, args.port)   
     temp = tempfile.mkdtemp()
 
     try:
@@ -158,7 +161,7 @@ if __name__ == "__main__":
                 max_epochs = None
 
             training_model.module._vivisect = {"model_name" : "Sockeye model", "iteration" : 0, "framework" : "mxnet"}
-            probe(training_model.module, "localhost", 8082)
+            probe(training_model.module, args.host, args.port)
 
             trainer = training.EarlyStoppingTrainer(model=training_model,
                                                     optimizer_config=create_optimizer_config(train_args, source_vocab_sizes),
@@ -197,5 +200,5 @@ if __name__ == "__main__":
     except Exception as e:
         raise e
     finally:
-        flush("localhost", 8082)
+        flush(args.host, args.port)
         shutil.rmtree(temp)

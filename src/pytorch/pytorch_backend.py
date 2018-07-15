@@ -15,6 +15,7 @@ import torch
 
 
 model_types = (nn.Module)
+framework_name = "PyTorch"
 
 
 def get_ops(model):
@@ -29,7 +30,7 @@ def unpack_parameters(params, op):
 def unpack_outputs(outputs, op):
     if isinstance(outputs, torch.Tensor):
         return {"output" : outputs.data.tolist()}
-    elif isinstance(op, nn.LSTM):
+    elif isinstance(op, nn.LSTM) and len(outputs) == 2:
         o, (h, c) = outputs
         return {"hidden" : h.squeeze().data.tolist(),
                 "state" : c.squeeze().data.tolist(),

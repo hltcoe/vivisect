@@ -20,12 +20,11 @@ def onehot(i, r):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--host", dest="host", default="0.0.0.0", help="Host name")
-    parser.add_argument("--port", dest="port", default=8082, type=int, help="Port number")
+    parser.add_argument("--host", dest="host", default="aggregator", help="Host name")
+    parser.add_argument("--port", dest="port", default=8080, type=int, help="Port number")
     parser.add_argument("--clear", dest="clear", action="store_true", default=False, help="Clear the database first")
     parser.add_argument("--epochs", dest="epochs", default=10, type=int, help="Maximum training epochs")
     parser.add_argument("--hidden_size", dest="hidden_size", default=50, type=int, help="Hidden size for MLPs/LSTMs")
-    parser.add_argument("--input", dest="input", default="data/lid.txt.gz", help="")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
@@ -73,27 +72,26 @@ if __name__ == "__main__":
 
     logging.info("PyTorch MLP model")    
     model = mlp(n_mlp_feats, n_mlp_labels, args.hidden_size)    
-    model._vivisect = {"epoch" : 0, "model_name" : "PyTorch MLP Model", "framework" : "pytorch"}
+    #model._vivisect = {"epoch" : 0, }
     assert(isinstance(model, torch.nn.Module))
     probe(model, args.host, args.port, which, when, model_name="PyTorch MLP")
     logging.info("Operations: %s, Parameters: %s", *get_model_info(model))
-    register_classification_targets(args.host, args.port, name="Classify", targets=y_train, model_pattern="PyTorch MLP Model", layer_pattern=".*outputs.*")
-    register_clustering_targets(args.host, args.port, name="Cluster", targets=y_train, model_pattern="PyTorch MLP Model", layer_pattern=".*outputs.*")
+    register_classification_targets(args.host, args.port, name="Classify", targets=y_train, model_pattern="PyTorch MLP") #, layer_pattern=".*outputs.*")
+    register_clustering_targets(args.host, args.port, name="Cluster", targets=y_train, model_pattern="PyTorch MLP") #, layer_pattern=".*outputs.*")
     train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, args.epochs)
 
 
-    import mxnet
     from mxnet.gluon import Block, HybridBlock, SymbolBlock, Trainer
     from vivisect.mxnet import mlp
 
-    logging.info("MXNet MLP model")
+    logging.info("Gluon MLP model")
     model = mlp(n_mlp_feats, n_mlp_labels, args.hidden_size)    
-    model._vivisect = {"epoch" : 0, "model_name" : "MXNet MLP Model", "framework" : "pytorch"}
-    assert(isinstance(model, mxnet.gluon.Block))
-    probe(model, args.host, args.port, which, when, model_name="MXNet MLP")
+    model._vivisect = {"epoch" : 0, "framework" : "pytorch"}
+    assert(isinstance(model, Block))
+    probe(model, args.host, args.port, which, when, model_name="Gluon MLP")
     logging.info("Operations: %s, Parameters: %s", *get_model_info(model))
-    register_classification_targets(args.host, args.port, name="Classify", targets=y_train, model_pattern="MXNet MLP Model", layer_pattern=".*outputs.*")
-    register_clustering_targets(args.host, args.port, name="Cluster", targets=y_train, model_pattern="MXNet MLP Model", layer_pattern=".*outputs.*")
+    register_classification_targets(args.host, args.port, name="Classify", targets=y_train, model_pattern="Gluon MLP") #, layer_pattern=".*outputs.*")
+    register_clustering_targets(args.host, args.port, name="Cluster", targets=y_train, model_pattern="Gluon MLP") #, layer_pattern=".*outputs.*")
     train(model, x_train, y_train, x_dev, y_dev, x_test, y_test, args.epochs)
 
     

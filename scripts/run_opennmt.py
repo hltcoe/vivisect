@@ -25,22 +25,7 @@ import gzip
 import tempfile
 import shutil
 import logging
-from vivisect import probe
-from vivisect.servers import clear, flush
-
-
-def check_existing_pt_files(opt):
-    """ Checking if there are existing .pt files to avoid tampering """
-    # We will use glob.glob() to find sharded {train|valid}.[0-9]*.pt
-    # when training, so check to avoid tampering with existing pt files
-    # or mixing them up.
-    for t in ['train', 'valid', 'vocab']:
-        pattern = opt.save_data + '.' + t + '*.pt'
-        if glob.glob(pattern):
-            sys.stderr.write("Please backup existing pt file: %s, "
-                             "to avoid tampering!\n" % pattern)
-            sys.exit(1)
-
+from vivisect import probe, clear, flush
 
 def build_save_in_shards(src_corpus, tgt_corpus, fields,
                          corpus_type, opt, logger=None):
@@ -181,27 +166,6 @@ def build_save_vocab(train_dataset, fields, opt, logger=None):
     torch.save(inputters.save_fields_to_vocab(fields), vocab_file)
 
 
-def _check_save_model_path(opt):
-    save_model_path = os.path.abspath(opt.save_model)
-    model_dirname = os.path.dirname(save_model_path)
-    if not os.path.exists(model_dirname):
-        os.makedirs(model_dirname)
-
-
-def _tally_parameters(model):
-    n_params = sum([p.nelement() for p in model.parameters()])
-    print('* number of parameters: %d' % n_params)
-    enc = 0
-    dec = 0
-    for name, param in model.named_parameters():
-        if 'encoder' in name:
-            enc += param.nelement()
-        elif 'decoder' or 'generator' in name:
-            dec += param.nelement()
-    print('encoder: ' + str(enc))
-    print('decoder: ' + str(dec))
-
-
 def training_opt_postprocessing(opt):
     if opt.word_vec_size != -1:
         opt.src_word_vec_size = opt.word_vec_size
@@ -233,113 +197,21 @@ def training_opt_postprocessing(opt):
     return opt
 
 
-def training_main(opt):
-    opt = training_opt_postprocessing(opt)
-    #opt.start_epoch = 1
-    
-    # Load checkpoint if we resume from a previous training.
-    if opt.train_from:
-        print('Loading checkpoint from %s' % opt.train_from)
-        checkpoint = torch.load(opt.train_from,
-                                map_location=lambda storage, loc: storage)
-        model_opt = checkpoint['opt']
-        # I don't like reassigning attributes of opt: it's not clear.
-        opt.start_epoch = checkpoint['epoch'] + 1
-    else:
-        checkpoint = None
-        model_opt = opt
-
-    # Peek the fisrt dataset to determine the data_type.
-    # (All datasets have the same data_type).
-    first_dataset = next(lazily_load_dataset("train", opt))
-    data_type = first_dataset.data_type
-
-    # Load fields generated from preprocess phase.
-    fields = _load_fields(first_dataset, data_type, opt, checkpoint)
-
-    # Report src/tgt features.
-    _collect_report_features(fields)
-
-    # Build model.
-    model = build_model(model_opt, opt, fields, checkpoint)
-    _tally_parameters(model)
-    _check_save_model_path(opt)
-
-    model._vivisect = {"epoch" : 0, "model_name" : "OpenNMT Model", "framework" : "pytorch", "mode" : "train"}
-    probe(model, "localhost", 8082,
-          when=lambda model, op, inp, outp : model._vivisect["mode"] == "train",
-          which=lambda model, op : "rnn" in op._vivisect["op_name"])
-    
-    # Build optimizer.
-    optim = build_optim(model, opt, checkpoint)
-
-    # Build model saver
-    model_saver = build_model_saver(model_opt, opt, model, fields, optim)
-
-
-        
-    trainer = build_trainer(
-        opt, model, fields, optim, data_type, model_saver=model_saver)
-
-    def train_iter_fct():
-        model._vivisect["epoch"] += 1
-        logging.info("Epoch %d", model._vivisect["epoch"])
-        model._vivisect["mode"] = "train"
-        return build_dataset_iter(lazily_load_dataset("train", opt), fields, opt)
-
-    def valid_iter_fct():
-        model._vivisect["mode"] = "dev"
-        return build_dataset_iter(lazily_load_dataset("valid", opt), fields, opt)
-
-    # Do training.
-    trainer.train(train_iter_fct, valid_iter_fct, opt.train_steps, 1)
-    
-    if opt.tensorboard:
-        trainer.report_manager.tensorboard_writer.close()
-
-        
-def preprocess_main(opt):
-    logger = logging
-    #logging.getLogger("ROOT")
-    #get_logger(opt.log_file)
-    src_nfeats = inputters.get_num_features(
-        opt.data_type, opt.train_src, 'src')
-    tgt_nfeats = inputters.get_num_features(
-        opt.data_type, opt.train_tgt, 'tgt')
-    logger.info(" * number of source features: %d." % src_nfeats)
-    logger.info(" * number of target features: %d." % tgt_nfeats)
-
-    logger.info("Building `Fields` object...")
-    fields = inputters.get_fields(opt.data_type, src_nfeats, tgt_nfeats)
-
-    logger.info("Building & saving training data...")
-    train_dataset_files = build_save_dataset('train', fields, opt, logger)
-
-    logger.info("Building & saving vocabulary...")
-    build_save_vocab(train_dataset_files, fields, opt, logger)
-
-    logger.info("Building & saving validation data...")
-    build_save_dataset('valid', fields, opt, logger)
-
-
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", dest="host", default="0.0.0.0", help="Host name")
     parser.add_argument("--port", dest="port", default=8082, type=int, help="Port number")
-    parser.add_argument("--frontend_host", dest="frontend_host", default="0.0.0.0", help="Host name")
-    parser.add_argument("--frontend_port", dest="frontend_port", default=8080, type=int, help="Port number")
+    parser.add_argument("--clear", dest="clear", action="store_true", default=False, help="Clear the database first")
     parser.add_argument("--source", dest="source")
     parser.add_argument("--target", dest="target")
     parser.add_argument("--epochs", dest="epochs", default=10, type=int)
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
-    
-    clear(args.host, args.port)
-    clear(args.frontend_host, args.frontend_port)
-
-    
+    if args.clear:
+        clear(args.host, args.port)
+        
     temp = tempfile.mkdtemp()
     
     source = []
@@ -389,15 +261,91 @@ if __name__ == "__main__":
                                           "-train_steps", str(args.epochs - 1),
                                           "-save_model", os.path.join(temp, "model")])
 
-    clear("localhost", 8082)
-    
     try:
         torch.manual_seed(preproc_args.seed)
-        check_existing_pt_files(preproc_args)
-        preprocess_main(preproc_args)
-        training_main(train_args)
+        
+        opt = preproc_args
+        logger = logging
+
+        src_nfeats = inputters.get_num_features(
+            opt.data_type, opt.train_src, 'src')
+        tgt_nfeats = inputters.get_num_features(
+            opt.data_type, opt.train_tgt, 'tgt')
+        logger.info(" * number of source features: %d." % src_nfeats)
+        logger.info(" * number of target features: %d." % tgt_nfeats)
+
+        logger.info("Building `Fields` object...")
+        fields = inputters.get_fields(opt.data_type, src_nfeats, tgt_nfeats)
+
+        logger.info("Building & saving training data...")
+        train_dataset_files = build_save_dataset('train', fields, opt, logger)
+
+        logger.info("Building & saving vocabulary...")
+        build_save_vocab(train_dataset_files, fields, opt, logger)
+
+        logger.info("Building & saving validation data...")
+        build_save_dataset('valid', fields, opt, logger)
+
+        opt = train_args
+        opt = training_opt_postprocessing(opt)
+        #opt.start_epoch = 1
+
+        # Load checkpoint if we resume from a previous training.
+        if opt.train_from:
+            print('Loading checkpoint from %s' % opt.train_from)
+            checkpoint = torch.load(opt.train_from,
+                                    map_location=lambda storage, loc: storage)
+            model_opt = checkpoint['opt']
+            # I don't like reassigning attributes of opt: it's not clear.
+            opt.start_epoch = checkpoint['epoch'] + 1
+        else:
+            checkpoint = None
+            model_opt = opt
+
+        # Peek the fisrt dataset to determine the data_type.
+        # (All datasets have the same data_type).
+        first_dataset = next(lazily_load_dataset("train", opt))
+        data_type = first_dataset.data_type
+
+        # Load fields generated from preprocess phase.
+        fields = _load_fields(first_dataset, data_type, opt, checkpoint)
+
+        # Report src/tgt features.
+        _collect_report_features(fields)
+
+        # Build model.
+        model = build_model(model_opt, opt, fields, checkpoint)
+        #_tally_parameters(model)
+        
+        model._vivisect = {"epoch" : 0, "model_name" : "OpenNMT Model", "framework" : "pytorch", "mode" : "train"}
+        probe(model, args.host, args.port,
+              when=lambda model, op : model._vivisect["mode"] == "train",
+              which=lambda model, op : "rnn" in op._vivisect["op_name"])
+
+        # Build optimizer.
+        optim = build_optim(model, opt, checkpoint)
+
+        trainer = build_trainer(opt, model, fields, optim, data_type)
+
+        def train_iter_fct():
+            print("TRAIN")
+            model._vivisect["epoch"] += 1
+            logging.info("Epoch %d", model._vivisect["epoch"])
+            model._vivisect["mode"] = "train"
+            return build_dataset_iter(lazily_load_dataset("train", opt), fields, opt)
+
+        def valid_iter_fct():
+            print("DEV")
+            model._vivisect["mode"] = "dev"
+            return build_dataset_iter(lazily_load_dataset("valid", opt), fields, opt)
+
+        # Do training.
+        #for epoch in range(4):
+        trainer.train(train_iter_fct, valid_iter_fct, 100, 100)
+
+            
     except Exception as e:
         raise e
     finally:
-        flush("localhost", 8082)
+        flush(args.host, args.port)
         shutil.rmtree(temp)
