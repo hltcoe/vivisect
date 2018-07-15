@@ -29,7 +29,47 @@ Libraries built on these frameworks should be able to use *vivisect* without mod
 
 ## Quick setup
 
-Install the library and the supported frameworks:
+Clone this repository:
+
+```
+git clone -b dev https://github.com/hltcoe/vivisect.git
+```
+
+and follow instructions for either Docker or non-Docker:
+
+### Docker
+
+If you have Docker and docker-compose installed, and the former running, you can pull the pre-built image with `docker pull hltcoe/vivisect`, or build it from scratch with `scripts/build_docker.sh`.  Either way, start the servers with:
+
+```
+docker-compose up -d
+```
+
+A random port will be forwarded for the *aggregator* server, which client code talks to, and the *frontend*, which can be browsed to:
+
+```
+docker-compose ps
+        Name                       Command               State            Ports         
+----------------------------------------------------------------------------------------
+vivisect_aggregator_1   python36 -m vivisect.serve ...   Up      0.0.0.0:32785->8080/tcp
+vivisect_evaluator_1    python36 -m vivisect.serve ...   Up                             
+vivisect_frontend_1     python36 -m vivisect.serve ...   Up      0.0.0.0:32784->8080/tcp
+```
+
+Based on this output, let's define `AGG_PORT=32785` and `FRONT_PORT=32784`.
+
+You can run the built-in tests with:
+
+```
+docker-compose exec aggregator run_mlps.py --epochs 10
+docker-compose exec aggregator run_rnns.py --epochs 10
+```
+
+View the results of the tests by browsing to `localhost:FRONT_PORT`.  You can use the setup in client code, outside of Docker, by calling Vivisect methods with `localhost` as the host and `AGG_PORT` as the port.
+
+### Non-Docker (better for developers, etc)
+
+Install Vivisect and its dependencies:
 
 ```python
 pip install . --user --pre --process-dependency-links
@@ -55,12 +95,10 @@ FLASK_APP="src/servers/frontend.py:create_server()" flask run --port 8080 --relo
 
 This is the server that collects and presents results, i.e. you can browse to `localhost:8080`.  Right now, the top-level page lists the models, the second level lists the metrics for a given model, and the third level plots the metric for each operation as a function of time.
 
-## Testing
-
 In another terminal, run one of the tests:
 
 ```bash
-python scripts/run_examples.py --host localhost --port 8082 --epochs 5
+run_mlps.py --host localhost --port 8082 --epochs 5
 ```
 
 You should see output on each of the server terminals as the example models train and pass information along.  After the script returns, you can browse to the interface to see the plots.
