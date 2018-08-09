@@ -12,11 +12,13 @@ class mlp(nn.Module):
     def __init__(self, nfeats, nlabels, hidden_size):
         super(mlp, self).__init__()
         self.dense1 = nn.Linear(in_features=nfeats, out_features=hidden_size)
-        self.dense2 = nn.Linear(in_features=hidden_size, out_features=nlabels)
+        self.dense2 = nn.Linear(in_features=hidden_size, out_features=hidden_size // 2)
+        self.dense3 = nn.Linear(in_features=hidden_size // 2, out_features=hidden_size // 4)
         self.softmax = nn.LogSoftmax(dim=1)
     def forward(self, x):
         x = F.relu(self.dense1(x[0]))
-        return self.softmax(F.relu(self.dense2(x)))
+        xx = F.relu(self.dense2(x))
+        return self.softmax(F.relu(self.dense3(xx)))
 
     
 class rnn(nn.Module):
@@ -25,7 +27,7 @@ class rnn(nn.Module):
         #self.emb = torchtext.vocab.GloVe(dim=300)
         self.lstm = nn.LSTM(input_size=nfeats, hidden_size=hidden_size)
         self.dense = nn.Linear(in_features=hidden_size, out_features=nlabels)
-        #self.softmax = nn.LogSoftmax(dim=1)
+        self.softmax = nn.LogSoftmax(dim=1)
     def forward(self, x):
         x, l = x
         #print(x.shape, l.shape)
@@ -49,7 +51,8 @@ class rnn(nn.Module):
         #inp = torch.Tensor([out[i, v - 1, :] for i, v in enumerate(ind)])
         #out.index_select(1, ind - 1)
         #print(inp.shape)
-        v = self.dense(ht.squeeze())
+        #return self.softmax(F.relu(self.dense2(x)))
+        return self.softmax(F.relu(self.dense(ht.squeeze())))
         #print(v.shape)
-        return v
+        #return v
         #return (packed_out, (ht, ct))

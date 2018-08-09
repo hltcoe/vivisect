@@ -186,3 +186,7 @@ def my_metric(eval_packet) -> float
 ### Frontend
 
 The *frontend* receives `metric_packet`s, which are very lightweight since they just contain metadata and the metric value.  Typically, this server is only serving `GET` requests, as web clients browse plots of the metric values.  It also accepts `POST` commands that remove collected metric values.
+
+## NOTES
+
+Number of instances must be divisible by batch size

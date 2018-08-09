@@ -9,7 +9,7 @@ import random
 import os
 #os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 #from vivisect.servers import flush, clear
-from vivisect import probe, train, get_model_info, register_classification_targets, register_clustering_targets, flush, clear
+from vivisect import probe, train, register_classification_targets, register_clustering_targets, flush, clear, remove
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 
@@ -22,18 +22,16 @@ def onehot(i, r):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("--name", dest="name", default="RNN", help="Model name")
     parser.add_argument("--host", dest="host", default="aggregator", help="Host name")
     parser.add_argument("--port", dest="port", default=8080, type=int, help="Port number")
-    parser.add_argument("--clear", dest="clear", action="store_true", default=False, help="Clear the database first")
     parser.add_argument("--epochs", dest="epochs", default=10, type=int, help="Maximum training epochs")
     parser.add_argument("--hidden_size", dest="hidden_size", default=50, type=int, help="Hidden size for MLPs/LSTMs")
     parser.add_argument("--input", dest="input", default="/tmp/vivisect/data/lid.txt.gz", help="")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
-    if args.clear:
-        clear(args.host, args.port)
-
+    
     # read some data for an RNN model
     instances = []
     char_lookup = {"<S>" : 0, "</S>" : 1}
@@ -45,7 +43,7 @@ if __name__ == "__main__":
 
     
     random.shuffle(instances)
-    instances = instances[0:300]
+    instances = instances[0:1000]
     max_len = max([len(x) for _, x in instances])
     train_instances = instances[0:int(.8 * len(instances))]
     y_rnn_train = numpy.asarray([l for l, _ in train_instances])
@@ -65,11 +63,19 @@ if __name__ == "__main__":
     rchar_lookup = {v : k for k, v in char_lookup.items()}
 
     
-    def which(model, operation):
-        return (operation._vivisect["op_name"] != "")
+    #def which(model, operation):
+    #    return (operation._vivisect["op_name"] != "")
 
-    def when(model, operation):
-        return (model._vivisect["epoch"] % 1 == 0 and model._vivisect["mode"] == "train")
+    #def when(model, operation):
+    #    return (model._vivisect["epoch"] % 1 == 0 and model._vivisect["mode"] == "train")
+    def which_operation(model, operation):
+        return True #(operation._v.name != "")
+
+    def which_array(model, operation, array_info):
+        return True
+    
+    def when(model, operation=None, array=None):
+        return (model._v.epoch % 5 == 0 and model._v.state == "train")
 
     
     # logging.info("Testing with Tensorflow 'Session'")
@@ -89,25 +95,25 @@ if __name__ == "__main__":
     
     logging.info("PyTorch RNN model")
     model = rnn(n_rnn_feats, n_rnn_labels, args.hidden_size, rlabel_lookup, rchar_lookup)
-    model._vivisect = {"epoch" : 0, "model_name" : "PyTorch RNN Model", "framework" : "pytorch"}
     assert(isinstance(model, torch.nn.Module))
-    probe(model, args.host, args.port, which, when, model_name="PyTorch RNN")
-    register_classification_targets(args.host, args.port, name="Classify", targets=y_rnn_dev, model_pattern="PyTorch RNN") #, layer_pattern=".*outputs.*")
-    register_clustering_targets(args.host, args.port, name="Cluster", targets=y_rnn_dev, model_pattern="PyTorch RNN") #, layer_pattern=".*outputs.*")
-    train(model, (x_rnn_train, lengths_rnn_train), y_rnn_train, (x_rnn_dev, lengths_rnn_dev), y_rnn_dev, (x_rnn_test, lengths_rnn_test), y_rnn_test, args.epochs)
+    remove(args.host, args.port, "RNN")
+    probe(args.name, model, args.host, args.port, which_operation, when)
+    register_classification_targets(args.host, args.port, name="Classify language", targets=y_rnn_train, model_pattern="RNN")
+    register_clustering_targets(args.host, args.port, name="Cluster language", targets=y_rnn_train, model_pattern="RNN")
+    train(model, (x_rnn_train, lengths_rnn_train), y_rnn_train, (x_rnn_dev, lengths_rnn_dev), y_rnn_dev, (x_rnn_test, lengths_rnn_test), y_rnn_test, args.epochs, batch_size=2)
 
     
-    from vivisect.gluon import rnn
-    from mxnet.gluon import Block, HybridBlock, SymbolBlock, Trainer
+    # from vivisect.gluon import rnn
+    # from mxnet.gluon import Block, HybridBlock, SymbolBlock, Trainer
     
-    logging.info("Gluon RNN model")
-    model = rnn(n_rnn_feats, n_rnn_labels, args.hidden_size)
-    model._vivisect = {"epoch" : 0, "framework" : "mxnet"}    
-    assert(isinstance(model, Block))
-    probe(model, args.host, args.port, which, when, model_name="Gluon RNN")
-    register_classification_targets(args.host, args.port, name="Classify", targets=y_rnn_dev, model_pattern="Gluon RNN") #, layer_pattern=".*outputs.*")
-    register_clustering_targets(args.host, args.port, name="Cluster", targets=y_rnn_dev, model_pattern="Gluon RNN") #, layer_pattern=".*outputs.*")
-    train(model, (x_rnn_train, lengths_rnn_train), y_rnn_train, (x_rnn_dev, lengths_rnn_dev), y_rnn_dev, (x_rnn_test, lengths_rnn_test), y_rnn_test, args.epochs)
+    # logging.info("Gluon RNN model")
+    # model = rnn(n_rnn_feats, n_rnn_labels, args.hidden_size)
+    # model._vivisect = {"epoch" : 0, "framework" : "mxnet"}    
+    # assert(isinstance(model, Block))
+    # probe(model, args.host, args.port, which, when, model_name="Gluon RNN")
+    # register_classification_targets(args.host, args.port, name="Classify", targets=y_rnn_dev, model_pattern="Gluon RNN") #, layer_pattern=".*outputs.*")
+    # register_clustering_targets(args.host, args.port, name="Cluster", targets=y_rnn_dev, model_pattern="Gluon RNN") #, layer_pattern=".*outputs.*")
+    # train(model, (x_rnn_train, lengths_rnn_train), y_rnn_train, (x_rnn_dev, lengths_rnn_dev), y_rnn_dev, (x_rnn_test, lengths_rnn_test), y_rnn_test, args.epochs)
 
     
     flush(args.host, args.port)
